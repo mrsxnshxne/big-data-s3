@@ -39,3 +39,31 @@ export S3_SECRET_KEY=secret-rustfs
 ```
 
 Le port `9000` est celui de l’API S3. Le port `9001` est réservé à la console.
+
+Le script envoie uniquement les fichiers `*.log`. Les clés API ne sont
+normalement pas écrites dans le log OpenCode, mais évitez d’y copier des
+secrets : les prompts, commandes ou sorties d’outils peuvent contenir des
+données sensibles.
+
+## Sauvegarder les logs OpenCode
+
+Le script utilise par défaut `~/.local/share/opencode/log` :
+
+```sh
+./opencode-s3-logs.sh upload
+```
+
+Lister les logs stockés :
+
+```sh
+./opencode-s3-logs.sh list
+```
+
+Lire un log depuis le CLI :
+
+```sh
+./opencode-s3-logs.sh read opencode/opencode.log
+```
+
+Pour un RustFS distant, réutiliser `S3_ENDPOINT`, `S3_ACCESS_KEY` et
+`S3_SECRET_KEY` définis pour le test S3. Le bucket utilisé est `rustfs-test`.
