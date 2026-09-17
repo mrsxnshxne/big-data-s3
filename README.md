@@ -1,69 +1,57 @@
-# RustFS S3
+# OpenCode Observatory
 
-## Démarrer RustFS
+Pipeline local d'analyse des conversations OpenCode :
 
-Configurer les identifiants si nécessaire, puis démarrer le service :
+`opencode.db` -> Parquet -> RustFS/S3 -> DuckDB -> Streamlit
+
+Les données peuvent contenir des prompts, chemins, commandes et sorties d'outils sensibles. Ne rendez pas le bucket public.
+
+## Installation
 
 ```sh
-export S3_ACCESS_KEY=rustfsadmin
-export S3_SECRET_KEY=rustfsadmin
+python3 -m venv .venv
+. ./venv.sh activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
+
+## Démarrage local
+
+```sh
 docker compose up -d rustfs
+set -a; . ./.env; set +a
+./opencode-analytics.sh sync
+streamlit run app.py --server.address=127.0.0.1
 ```
 
-- API S3 : `http://localhost:9000`
-- Console : `http://localhost:9001`
+Dashboard : <http://localhost:8501>
 
-## Tester l’accès S3
-
-Le script crée un bucket, écrit un objet, le relit et compare son contenu.
-AWS CLI est requis localement :
+Pour synchroniser automatiquement toutes les 30 secondes :
 
 ```sh
-sudo apt update && sudo apt install -y awscli
-chmod +x test-s3.sh
+./opencode-analytics.sh enable
+./opencode-analytics.sh status
+./opencode-analytics.sh disable
 ```
 
-Test local :
+Le venv peut être désactivé avec :
 
 ```sh
-./test-s3.sh
+. ./venv.sh deactivate
 ```
 
-Test d’un RustFS distant :
+## Dashboard Docker
+
+Le dashboard peut aussi récupérer les Parquet depuis RustFS :
 
 ```sh
-export S3_ENDPOINT=http://ADRESSE_DU_VPS:9000
-export S3_ACCESS_KEY=identifiant-rustfs
-export S3_SECRET_KEY=secret-rustfs
-./test-s3.sh
+docker compose --profile dashboard up --build dashboard
 ```
 
-Le port `9000` est celui de l’API S3. Le port `9001` est réservé à la console.
-
-Le script envoie uniquement les fichiers `*.log`. Les clés API ne sont
-normalement pas écrites dans le log OpenCode, mais évitez d’y copier des
-secrets : les prompts, commandes ou sorties d’outils peuvent contenir des
-données sensibles.
-
-## Sauvegarder les logs OpenCode
-
-Le script utilise par défaut `~/.local/share/opencode/log` :
+Le service est exposé sur `127.0.0.1:8501`. Pour un serveur distant, utilisez un tunnel SSH :
 
 ```sh
-./opencode-s3-logs.sh upload
+ssh -N -L 8501:127.0.0.1:8501 utilisateur@serveur
 ```
-
-Lister les logs stockés :
-
-```sh
-./opencode-s3-logs.sh list
-```
-
-Lire un log depuis le CLI :
-
-```sh
-./opencode-s3-logs.sh read opencode/opencode.log
-```
-
-Pour un RustFS distant, réutiliser `S3_ENDPOINT`, `S3_ACCESS_KEY` et
-`S3_SECRET_KEY` définis pour le test S3. Le bucket utilisé est `rustfs-test`.
