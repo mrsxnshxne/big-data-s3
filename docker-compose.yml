@@ -1,5 +1,6 @@
 services:
   rustfs:
+    container_name: big-data-s3-rustfs
     image: rustfs/rustfs:latest
     command: ["--address", ":9000", "--console-address", ":9001", "/data"]
     environment:
@@ -12,6 +13,23 @@ services:
       - rustfs-data:/data
     restart: unless-stopped
 
+  iceberg-rest:
+    container_name: big-data-s3-iceberg-rest
+    image: tabulario/iceberg-rest:1.6.0
+    depends_on:
+      - rustfs
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-rustfsadmin}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      CATALOG_WAREHOUSE: s3://${ICEBERG_BUCKET:-iceberg-warehouse}
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://rustfs:9000
+      CATALOG_S3_PATH_STYLE_ACCESS: "true"
+    ports:
+      - "127.0.0.1:${ICEBERG_PORT:-8181}:8181"
+    restart: unless-stopped
+
   aws-cli:
     image: amazon/aws-cli:2.27.41
     profiles: [tools]
@@ -22,10 +40,12 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
 
   dashboard:
+    container_name: big-data-s3-dashboard
     build: .
     profiles: [dashboard]
     depends_on:
       - rustfs
+      - iceberg-rest
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
     volumes:
@@ -37,6 +57,34 @@ services:
       S3_PREFIX: ${S3_PREFIX:-parquet}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
+      ICEBERG_CATALOG_URI: http://iceberg-rest:8181
+      ICEBERG_WAREHOUSE: s3://${ICEBERG_BUCKET:-iceberg-warehouse}
+      ICEBERG_S3_ENDPOINT: http://rustfs:9000
+      ICEBERG_S3_PATH_STYLE_ACCESS: "true"
+
+  spark:
+    image: apache/spark:3.5.6-python3
+    profiles: [spark]
+    depends_on:
+      - rustfs
+    working_dir: /opt/opencode
+    volumes:
+      - .:/opt/opencode
+    environment:
+      S3_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: ${S3_BUCKET:-opencode-analytics}
+      S3_PREFIX: ${S3_PREFIX:-parquet}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
+      SPARK_INPUT: s3a://${S3_BUCKET:-opencode-analytics}/${S3_PREFIX:-parquet}
+      SPARK_OUTPUT: s3a://${S3_BUCKET:-opencode-analytics}/spark
+    command:
+      - /opt/spark/bin/spark-submit
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - --packages
+      - org.apache.hadoop:hadoop-aws:3.3.4
+      - spark/analytics.py
 
 volumes:
   rustfs-data:

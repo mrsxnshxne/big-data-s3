@@ -9,10 +9,16 @@ import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import boto3
+from botocore.exceptions import ClientError, EndpointConnectionError
 import duckdb
 import pandas as pd
+import pyarrow.parquet as pq
+from pyiceberg.catalog import load_catalog
+from pyiceberg.io.pyarrow import pyarrow_to_schema
+from pyiceberg.table.name_mapping import MappedField, NameMapping
 
 
 def obj(value: Any) -> dict[str, Any]:
@@ -125,7 +131,13 @@ def upload(output: Path) -> None:
     bucket = os.getenv("S3_BUCKET", "opencode-analytics")
     try:
         client.head_bucket(Bucket=bucket)
-    except client.exceptions.ClientError:
+    except EndpointConnectionError as exc:
+        endpoint = os.getenv("S3_ENDPOINT", "http://localhost:9000")
+        raise RuntimeError(f"Could not connect to S3 endpoint {endpoint}") from exc
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code not in {"404", "NoSuchBucket", "NotFound"}:
+            raise
         client.create_bucket(Bucket=bucket)
     prefix = os.getenv("S3_PREFIX", "parquet")
     for path in output.glob("*.parquet"):
@@ -133,11 +145,69 @@ def upload(output: Path) -> None:
         print(f"uploaded s3://{bucket}/{prefix}/{path.name}")
 
 
+def publish_iceberg(output: Path) -> None:
+    """Replace the analytical tables in the configured Iceberg catalog."""
+    uri = os.getenv("ICEBERG_CATALOG_URI", "")
+    if not uri:
+        return
+    warehouse = os.getenv("ICEBERG_WAREHOUSE", "s3://iceberg-warehouse")
+    bucket = urlparse(warehouse).netloc
+    if bucket:
+        client = boto3.client(
+            "s3",
+            endpoint_url=os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
+            aws_access_key_id=os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
+            aws_secret_access_key=os.getenv("S3_SECRET_KEY", "rustfsadmin"),
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        )
+        try:
+            client.head_bucket(Bucket=bucket)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") not in {"404", "NoSuchBucket", "NotFound"}:
+                raise
+            client.create_bucket(Bucket=bucket)
+    properties = {
+        "uri": uri,
+        "warehouse": warehouse,
+        "s3.endpoint": os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
+        "s3.access-key-id": os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
+        "s3.secret-access-key": os.getenv("S3_SECRET_KEY", "rustfsadmin"),
+        "s3.region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        "s3.path-style-access": os.getenv("ICEBERG_S3_PATH_STYLE_ACCESS", "true"),
+    }
+    catalog = load_catalog("opencode", type="rest", **properties)
+    catalog.create_namespace_if_not_exists("analytics")
+    for name in ("sessions", "messages", "parts", "tools"):
+        path = output / f"{name}.parquet"
+        arrow_table = pq.read_table(path)
+        identifier = f"analytics.{name}"
+        try:
+            table = catalog.load_table(identifier)
+            table.overwrite(arrow_table)
+        except Exception as exc:
+            # A missing table is the normal first-run case; preserve other errors.
+            if "NoSuchTable" not in type(exc).__name__ and "not found" not in str(exc).lower():
+                raise
+            name_mapping = NameMapping([
+                MappedField(field_id=index, names=[field.name])
+                for index, field in enumerate(arrow_table.schema, start=1)
+            ])
+            schema = pyarrow_to_schema(
+                arrow_table.schema,
+                name_mapping=name_mapping,
+                downcast_ns_timestamp_to_us=True,
+            )
+            table = catalog.create_table(identifier, schema=schema)
+            table.append(arrow_table)
+        print(f"published iceberg.analytics.{name}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, default=Path.home() / ".local/share/opencode/opencode.db")
     parser.add_argument("--output", type=Path, default=Path("data/parquet"))
     parser.add_argument("--upload", action="store_true", help="upload Parquet files to RustFS")
+    parser.add_argument("--iceberg", action="store_true", help="publish tables to the Iceberg REST catalog")
     args = parser.parse_args()
     if not args.database.exists():
         parser.error(f"OpenCode database not found: {args.database}")
@@ -146,6 +216,8 @@ def main() -> None:
     print(f"extracted {len(datasets['sessions'])} sessions, {len(datasets['messages'])} messages, {len(datasets['parts'])} parts")
     if args.upload:
         upload(args.output)
+    if args.iceberg:
+        publish_iceberg(args.output)
 
 
 if __name__ == "__main__":

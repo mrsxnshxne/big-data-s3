@@ -8,7 +8,7 @@ INTERVAL="${OPENCODE_ANALYTICS_INTERVAL:-30}"
 
 sync_once() {
     cd "$ROOT"
-    python3 ingest.py --database "${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}" --output "${DATA_DIR:-$ROOT/data/parquet}" --upload
+    python3 ingest.py --database "${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}" --output "${DATA_DIR:-$ROOT/data/parquet}" --upload --iceberg
 }
 
 watch_loop() {

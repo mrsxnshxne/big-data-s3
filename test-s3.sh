@@ -22,7 +22,9 @@ trap cleanup EXIT
 run_aws() {
     if command -v aws >/dev/null 2>&1; then
         aws "$@"
-    elif command -v docker >/dev/null 2>&1; then
+    elif command -v docker-compose >/dev/null 2>&1; then
+        docker-compose run --rm --no-deps aws-cli "$@"
+    elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         docker compose run --rm --no-deps aws-cli "$@"
     else
         printf 'AWS CLI is required. Install awscli or Docker.\n' >&2

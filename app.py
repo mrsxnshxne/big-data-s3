@@ -7,6 +7,7 @@ from pathlib import Path
 
 import boto3
 import duckdb
+from pyiceberg.catalog import load_catalog
 import streamlit as st
 
 st.set_page_config(page_title="OpenCode Observatory", page_icon="◌", layout="wide")
@@ -14,6 +15,7 @@ st.set_page_config(page_title="OpenCode Observatory", page_icon="◌", layout="w
 DATA_DIR = Path(os.getenv("DATA_DIR", "data/parquet"))
 S3_BUCKET = os.getenv("S3_BUCKET", "")
 S3_PREFIX = os.getenv("S3_PREFIX", "parquet").strip("/")
+ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "")
 
 
 @st.cache_data(ttl=30)
@@ -52,9 +54,32 @@ def parquet_signature(directory: Path) -> tuple[tuple[str, int, int] | tuple[str
 
 
 @st.cache_resource
-def db(directory: Path, signature: tuple[tuple[str, int, int] | tuple[str, None, None], ...]) -> duckdb.DuckDBPyConnection:
+def db(directory: Path, signature: tuple[tuple[str, int, int] | tuple[str, None, None], ...], catalog_uri: str) -> duckdb.DuckDBPyConnection:
     connection = duckdb.connect()
+    iceberg = {}
+    if catalog_uri:
+        catalog = load_catalog(
+            "opencode",
+            type="rest",
+            uri=catalog_uri,
+            warehouse=os.getenv("ICEBERG_WAREHOUSE", "s3://iceberg-warehouse"),
+            **{
+                "s3.endpoint": os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
+                "s3.access-key-id": os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
+                "s3.secret-access-key": os.getenv("S3_SECRET_KEY", "rustfsadmin"),
+                "s3.region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+                "s3.path-style-access": os.getenv("ICEBERG_S3_PATH_STYLE_ACCESS", "true"),
+            },
+        )
+        for name in ("sessions", "messages", "parts", "tools"):
+            try:
+                iceberg[name] = catalog.load_table(f"analytics.{name}").scan().to_arrow()
+            except Exception:
+                pass
     for name in ("sessions", "messages", "parts", "tools"):
+        if name in iceberg:
+            connection.register(name, iceberg[name])
+            continue
         path = directory / f"{name}.parquet"
         if path.exists():
             escaped_path = str(path).replace("'", "''")
@@ -82,9 +107,10 @@ def render_tool(tool: object, status: object, tool_input: object, output: object
 
 
 directory = data_dir()
-connection = db(directory, parquet_signature(directory))
-if not (directory / "sessions.parquet").exists():
-    st.error("Aucune donnée Parquet. Lancez `python ingest.py --upload` puis rechargez la page.")
+connection = db(directory, parquet_signature(directory), ICEBERG_CATALOG_URI)
+available_tables = {row[0] for row in connection.execute("show tables").fetchall()}
+if "sessions" not in available_tables:
+    st.error("Aucune donnée analytique. Lancez `python ingest.py --upload --iceberg` puis rechargez la page.")
     st.stop()
 
 st.title("OpenCode Observatory")
