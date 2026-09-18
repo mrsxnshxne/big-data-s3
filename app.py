@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -61,6 +62,25 @@ def db(directory: Path, signature: tuple[tuple[str, int, int] | tuple[str, None,
     return connection
 
 
+def render_tool(tool: object, status: object, tool_input: object, output: object) -> None:
+    """Render a tool call without hiding its structured input or result."""
+    title = f"{tool} · {status or 'statut inconnu'}"
+    with st.expander(title, expanded=False):
+        st.markdown("**Entrée**")
+        try:
+            st.json(json.loads(tool_input or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            st.code(str(tool_input or ""), language=None)
+        st.markdown("**Sortie**")
+        if output:
+            try:
+                st.json(json.loads(output))
+            except (TypeError, json.JSONDecodeError):
+                st.code(str(output), language=None)
+        else:
+            st.caption("Aucune sortie enregistrée")
+
+
 directory = data_dir()
 connection = db(directory, parquet_signature(directory))
 if not (directory / "sessions.parquet").exists():
@@ -99,12 +119,20 @@ messages = connection.execute("select * from messages where session_id = ? order
 for _, message in messages.iterrows():
     role = "Utilisateur" if message.role == "user" else "Agent"
     with st.expander(f"{role} · {message.created_at:%Y-%m-%d %H:%M:%S} · {message.message_id}", expanded=False):
-        parts = connection.execute("select type, text from parts where message_id = ? order by created_at", [message.message_id]).df()
+        parts = connection.execute("""
+            select p.type, p.text, t.tool, t.status, t.input, t.output
+            from parts p
+            left join tools t on t.part_id = p.part_id
+            where p.message_id = ?
+            order by p.created_at
+        """, [message.message_id]).df()
         for _, part in parts.iterrows():
-            if part.text or part.type in ("reasoning", "tool"):
-                label = {"reasoning": "Réflexion", "tool": "Outil", "text": "Message"}.get(part.type, part.type)
+            if part.type == "tool":
+                render_tool(part.tool, part.status, part.input, part.output)
+            elif part.text:
+                label = {"reasoning": "Réflexion", "text": "Message"}.get(part.type, part.type)
                 st.markdown(f"**{label}**")
-                st.code(part.text or "(détails structurés disponibles dans la vue outils)", language=None)
+                st.code(part.text, language=None)
 
 st.markdown("#### Détails des appels outil")
 st.dataframe(connection.execute("select tool, status, input, output, created_at from tools where session_id = ? order by created_at", [session_id]).df(), hide_index=True, use_container_width=True)
