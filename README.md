@@ -1,13 +1,39 @@
 # OpenCode Observatory
 
-Pipeline local d'analyse des conversations OpenCode :
+Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
+SQLite locale d'OpenCode, transforme les données en jeux Parquet, les stocke
+dans un objet S3 compatible, les publie dans un catalogue Apache Iceberg et les
+interroge avec DuckDB dans un dashboard Streamlit.
 
-`opencode.db` -> Parquet -> RustFS/S3 -> Iceberg REST -> DuckDB -> Streamlit
+```text
+opencode.db
+    -> ingest.py
+    -> Parquet (sessions, messages, parts, tools)
+    -> RustFS / S3
+    -> Apache Iceberg REST
+    -> DuckDB
+    -> Streamlit
+```
 
-Spark produit une couche d'agregats depuis les Parquet :
+Apache Spark fournit en parallèle des agrégats analytiques :
 `daily_activity`, `session_summary`, `tool_usage` et `model_usage`.
 
-Les données peuvent contenir des prompts, chemins, commandes et sorties d'outils sensibles. Ne rendez pas le bucket public.
+> Ce projet n'est pas un scraper web. Il collecte les données déjà présentes
+> dans la base SQLite locale d'OpenCode.
+
+## Documentation
+
+- [Documentation complète](docs/README.md)
+- [Architecture et flux](docs/architecture.md)
+- [Extraction et modèle de données](docs/ingestion.md)
+- [RustFS et S3](docs/s3.md)
+- [Apache Iceberg](docs/iceberg.md)
+- [Data Lake, Data Warehouse et Lakehouse](docs/concepts.md)
+- [Spark et agrégats](docs/spark.md)
+- [Dashboard et exploitation](docs/operations.md)
+
+Les données peuvent contenir des prompts, chemins, commandes et sorties d'outils
+sensibles. Ne rendez pas les buckets publics et ne commitez jamais `.env`.
 
 ## Installation
 
@@ -79,6 +105,6 @@ Pour executer Spark dans Docker et lire les Parquet depuis RustFS :
 docker-compose --profile spark run --rm spark
 ```
 
-Les sorties locales sont ignorees par Git. Pour une sortie S3, utilisez
+Les sorties locales sont ignorées par Git. Pour une sortie S3, utilisez
 `SPARK_INPUT=s3a://opencode-analytics/parquet` et
 `SPARK_OUTPUT=s3a://opencode-analytics/spark`.
