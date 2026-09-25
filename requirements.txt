@@ -1,6 +1,7 @@
 duckdb>=1.1,<2
+kafka-python-ng>=2.2,<3
 pandas>=2.0,<3
 pyarrow>=14,<19
 streamlit>=1.38,<2
 boto3>=1.35,<2
-pyiceberg>=0.8,<1
+pyiceberg>=0.9,<1

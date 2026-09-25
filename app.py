@@ -2,88 +2,65 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
-from pathlib import Path
 
-import boto3
 import duckdb
+import pyarrow as pa
 from pyiceberg.catalog import load_catalog
 import streamlit as st
 
 st.set_page_config(page_title="OpenCode Observatory", page_icon="◌", layout="wide")
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "data/parquet"))
-S3_BUCKET = os.getenv("S3_BUCKET", "")
-S3_PREFIX = os.getenv("S3_PREFIX", "parquet").strip("/")
-ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "")
+ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "http://localhost:8181")
+ICEBERG_NAMESPACE = os.getenv("ICEBERG_NAMESPACE", "analytics")
+TABLES = ("sessions", "messages", "parts", "tools")
+PRIMARY_KEYS = {"sessions": "session_id", "messages": "message_id", "parts": "part_id", "tools": "part_id"}
 
 
-@st.cache_data(ttl=30)
-def data_dir() -> Path:
-    """Use local Parquet in development, or refresh a small S3 cache remotely."""
-    if not S3_BUCKET:
-        return DATA_DIR
-    target = Path(tempfile.gettempdir()) / "opencode-analytics-parquet"
-    target.mkdir(parents=True, exist_ok=True)
-    client = boto3.client(
-        "s3", endpoint_url=os.getenv("S3_ENDPOINT", "http://localhost:9000"),
-        aws_access_key_id=os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
-        aws_secret_access_key=os.getenv("S3_SECRET_KEY", "rustfsadmin"),
-        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+@st.cache_data(ttl=30, show_spinner="Chargement des tables Iceberg…")
+def load_tables(catalog_uri: str) -> dict[str, pa.Table]:
+    """Scan the Iceberg tables appended by the streaming sink."""
+    catalog = load_catalog(
+        "opencode",
+        type="rest",
+        uri=catalog_uri,
+        warehouse=os.getenv("ICEBERG_WAREHOUSE", "s3://iceberg-warehouse"),
+        **{
+            "s3.endpoint": os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
+            "s3.access-key-id": os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
+            "s3.secret-access-key": os.getenv("S3_SECRET_KEY", "rustfsadmin"),
+            "s3.region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+            "s3.path-style-access": os.getenv("ICEBERG_S3_PATH_STYLE_ACCESS", "true"),
+        },
     )
-    response = client.list_objects_v2(Bucket=S3_BUCKET, Prefix=f"{S3_PREFIX}/")
-    for item in response.get("Contents", []):
-        name = Path(item["Key"]).name
-        if name.endswith(".parquet"):
-            client.download_file(S3_BUCKET, item["Key"], str(target / name))
-    return target
+    tables = {}
+    for name in TABLES:
+        try:
+            tables[name] = catalog.load_table(f"{ICEBERG_NAMESPACE}.{name}").scan().to_arrow()
+        except Exception:
+            pass
+    return tables
 
 
-def parquet_signature(directory: Path) -> tuple[tuple[str, int, int] | tuple[str, None, None], ...]:
-    return tuple(
-        (
-            name,
-            path.stat().st_mtime_ns,
-            path.stat().st_size,
+def dedup_view_sql(name: str) -> str:
+    """The sink appends events; keep only the latest version of each row."""
+    key = PRIMARY_KEYS[name]
+    return f"""
+        create or replace view {name} as
+        select * exclude (_version) from (
+            select *, row_number() over (
+                partition by {key} order by updated_at desc
+            ) as _version
+            from raw_{name}
         )
-        if path.exists()
-        else (name, None, None)
-        for name in ("sessions", "messages", "parts", "tools")
-        for path in [directory / f"{name}.parquet"]
-    )
+        where _version = 1
+    """
 
 
-@st.cache_resource
-def db(directory: Path, signature: tuple[tuple[str, int, int] | tuple[str, None, None], ...], catalog_uri: str) -> duckdb.DuckDBPyConnection:
+def connect(tables: dict[str, pa.Table]) -> duckdb.DuckDBPyConnection:
     connection = duckdb.connect()
-    iceberg = {}
-    if catalog_uri:
-        catalog = load_catalog(
-            "opencode",
-            type="rest",
-            uri=catalog_uri,
-            warehouse=os.getenv("ICEBERG_WAREHOUSE", "s3://iceberg-warehouse"),
-            **{
-                "s3.endpoint": os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
-                "s3.access-key-id": os.getenv("S3_ACCESS_KEY", "rustfsadmin"),
-                "s3.secret-access-key": os.getenv("S3_SECRET_KEY", "rustfsadmin"),
-                "s3.region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-                "s3.path-style-access": os.getenv("ICEBERG_S3_PATH_STYLE_ACCESS", "true"),
-            },
-        )
-        for name in ("sessions", "messages", "parts", "tools"):
-            try:
-                iceberg[name] = catalog.load_table(f"analytics.{name}").scan().to_arrow()
-            except Exception:
-                pass
-    for name in ("sessions", "messages", "parts", "tools"):
-        if name in iceberg:
-            connection.register(name, iceberg[name])
-            continue
-        path = directory / f"{name}.parquet"
-        if path.exists():
-            escaped_path = str(path).replace("'", "''")
-            connection.execute(f"create or replace view {name} as select * from read_parquet('{escaped_path}')")
+    for name, table in tables.items():
+        connection.register(f"raw_{name}", table)
+        connection.execute(dedup_view_sql(name))
     return connection
 
 
@@ -106,11 +83,14 @@ def render_tool(tool: object, status: object, tool_input: object, output: object
             st.caption("Aucune sortie enregistrée")
 
 
-directory = data_dir()
-connection = db(directory, parquet_signature(directory), ICEBERG_CATALOG_URI)
+tables = load_tables(ICEBERG_CATALOG_URI)
+connection = connect(tables)
 available_tables = {row[0] for row in connection.execute("show tables").fetchall()}
 if "sessions" not in available_tables:
-    st.error("Aucune donnée analytique. Lancez `python ingest.py --upload --iceberg` puis rechargez la page.")
+    st.error(
+        "Aucune donnée dans Iceberg. Démarrez Redpanda et le sink "
+        "(`docker-compose up -d redpanda sink`), puis lancez `./opencode-analytics.sh sync`."
+    )
     st.stop()
 
 st.title("OpenCode Observatory")

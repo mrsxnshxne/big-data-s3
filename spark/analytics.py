@@ -1,15 +1,22 @@
-"""Build OpenCode activity aggregates with Apache Spark."""
+"""Build OpenCode activity aggregates with Apache Spark.
+
+Source tables come from the Iceberg catalog maintained by the streaming sink.
+For local development without a catalog, set ``SPARK_INPUT`` to a directory of
+Parquet files instead.
+"""
 
 from __future__ import annotations
 
 import argparse
 import os
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 
 TABLES = ("sessions", "messages", "tools")
+ICEBERG_CATALOG = os.getenv("SPARK_ICEBERG_CATALOG", "lakehouse")
+ICEBERG_NAMESPACE = os.getenv("ICEBERG_NAMESPACE", "analytics")
 
 
 def spark_session(master: str | None) -> SparkSession:
@@ -17,7 +24,7 @@ def spark_session(master: str | None) -> SparkSession:
     if master:
         builder = builder.master(master)
 
-    endpoint = os.getenv("S3_ENDPOINT")
+    endpoint = os.getenv("S3_ENDPOINT") or os.getenv("ICEBERG_S3_ENDPOINT")
     if endpoint:
         builder = (
             builder.config("spark.hadoop.fs.s3a.endpoint", endpoint)
@@ -30,16 +37,54 @@ def spark_session(master: str | None) -> SparkSession:
                 "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
             )
         )
+
+    catalog_uri = os.getenv("ICEBERG_CATALOG_URI")
+    if catalog_uri:
+        prefix = f"spark.sql.catalog.{ICEBERG_CATALOG}"
+        builder = (
+            builder.config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+            .config(prefix, "org.apache.iceberg.spark.SparkCatalog")
+            .config(f"{prefix}.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
+            .config(f"{prefix}.uri", catalog_uri)
+            .config(f"{prefix}.warehouse", os.getenv("ICEBERG_WAREHOUSE", "s3://iceberg-warehouse"))
+            .config(f"{prefix}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+            .config(f"{prefix}.client.region", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+            .config(f"{prefix}.s3.access-key-id", os.getenv("S3_ACCESS_KEY", "rustfsadmin"))
+            .config(f"{prefix}.s3.secret-access-key", os.getenv("S3_SECRET_KEY", "rustfsadmin"))
+            .config(
+                f"{prefix}.s3.endpoint",
+                os.getenv("ICEBERG_S3_ENDPOINT", os.getenv("S3_ENDPOINT", "http://localhost:9000")),
+            )
+            .config(
+                f"{prefix}.s3.path-style-access",
+                os.getenv("ICEBERG_S3_PATH_STYLE_ACCESS", "true"),
+            )
+        )
     return builder.getOrCreate()
 
 
-def read_tables(spark: SparkSession, input_path: str) -> dict[str, DataFrame]:
-    source = input_path.rstrip("/")
+def read_tables(spark: SparkSession, input_path: str | None) -> dict[str, DataFrame]:
+    catalog_uri = os.getenv("ICEBERG_CATALOG_URI")
+    keys = {"sessions": "session_id", "messages": "message_id", "tools": "part_id"}
     tables = {}
     for name in TABLES:
-        path = f"{source}/{name}.parquet"
-        tables[name] = spark.read.parquet(path)
+        if catalog_uri:
+            tables[name] = deduplicate(spark.table(f"{ICEBERG_CATALOG}.{ICEBERG_NAMESPACE}.{name}"), keys[name])
+        else:
+            if not input_path:
+                raise RuntimeError("Set ICEBERG_CATALOG_URI to read Iceberg, or SPARK_INPUT to read Parquet")
+            tables[name] = spark.read.parquet(f"{input_path.rstrip('/')}/{name}.parquet")
     return tables
+
+
+def deduplicate(frame: DataFrame, key: str) -> DataFrame:
+    """The sink appends events; keep the latest version of every row."""
+    window = Window.partitionBy(key).orderBy(F.col("updated_at").desc())
+    return (
+        frame.withColumn("_version", F.row_number().over(window))
+        .filter(F.col("_version") == 1)
+        .drop("_version")
+    )
 
 
 def build_metrics(tables: dict[str, DataFrame]) -> dict[str, DataFrame]:
@@ -128,7 +173,7 @@ def write_metrics(metrics: dict[str, DataFrame], output_path: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", default=os.getenv("SPARK_INPUT", "data/parquet"))
+    parser.add_argument("--input", default=os.getenv("SPARK_INPUT"), help="Parquet fallback when no Iceberg catalog is configured")
     parser.add_argument("--output", default=os.getenv("SPARK_OUTPUT", "data/spark"))
     parser.add_argument("--master", default=os.getenv("SPARK_MASTER", "local[*]"))
     args = parser.parse_args()

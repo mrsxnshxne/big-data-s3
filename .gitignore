@@ -4,8 +4,7 @@ __pycache__/
 *.py[cod]
 .opencode-analytics.pid
 opencode-analytics.log
-data/parquet/*.parquet
-data/spark/
+data/
 *.db
 *.sqlite
 *.sqlite3

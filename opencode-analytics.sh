@@ -5,10 +5,15 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PID_FILE="${OPENCODE_ANALYTICS_PID_FILE:-$ROOT/.opencode-analytics.pid}"
 INTERVAL="${OPENCODE_ANALYTICS_INTERVAL:-30}"
+if [ -z "${PYTHON:-}" ]; then
+    if [ -x "$ROOT/.venv/bin/python" ]; then PYTHON="$ROOT/.venv/bin/python"; else PYTHON=python3; fi
+fi
 
 sync_once() {
     cd "$ROOT"
-    python3 ingest.py --database "${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}" --output "${DATA_DIR:-$ROOT/data/parquet}" --upload --iceberg
+    "$PYTHON" produce.py \
+        --database "${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}" \
+        --state "${PRODUCER_STATE_FILE:-$ROOT/data/state/producer-state.json}"
 }
 
 watch_loop() {
@@ -24,11 +29,11 @@ case "${1:-}" in
         ;;
     enable)
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-            printf 'collector already running (pid %s)\n' "$(cat "$PID_FILE")"
-            exit 0
-        fi
-        (watch_loop >>"${OPENCODE_ANALYTICS_LOG:-$ROOT/opencode-analytics.log}" 2>&1 & printf '%s' "$!" >"$PID_FILE")
-        printf 'collector enabled (pid %s)\n' "$(cat "$PID_FILE")"
+        printf 'collector already running (pid %s)\n' "$(cat "$PID_FILE")"
+        exit 0
+    fi
+    (watch_loop >>"${OPENCODE_ANALYTICS_LOG:-$ROOT/opencode-analytics.log}" 2>&1 & printf '%s' "$!" >"$PID_FILE")
+    printf 'producer enabled (pid %s)\n' "$(cat "$PID_FILE")"
         ;;
     disable)
         if [ -f "$PID_FILE" ]; then
