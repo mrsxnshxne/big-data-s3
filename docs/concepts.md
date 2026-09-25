@@ -7,8 +7,8 @@ brutes ou peu transformées, souvent dans un stockage objet comme S3. Il accepte
 plusieurs formats et laisse le schéma être appliqué au moment de la lecture
 (*schema-on-read*).
 
-Dans ce projet, RustFS joue le rôle de stockage de data lake pour les Parquet
-extraits d'OpenCode et pour le warehouse Iceberg.
+Dans ce projet, RustFS joue le rôle de stockage de data lake : il héberge le
+warehouse Iceberg, où le sink streaming dépose les événements venus de Redpanda.
 
 Avantages : coût et souplesse, conservation des détails, séparation du stockage
 et du calcul. Risques : fichiers difficiles à gouverner, schémas instables et
@@ -35,6 +35,7 @@ qui permettent ce modèle.
 L'architecture OpenCode Observatory est donc un petit lakehouse local :
 
 ```text
+Redpanda  = file d'événements entre extraction et tables
 RustFS/S3 = stockage objet du lake
 Iceberg   = couche de tables et métadonnées
 DuckDB    = moteur SQL de consommation
@@ -43,7 +44,9 @@ Spark     = moteur de transformation batch
 
 ## ETL et ELT
 
-L'extraction SQLite vers Parquet est une étape **ETL** légère : les champs JSON
-sont décodés et normalisés avant d'être déposés. Les agrégations Spark sont
-plus proches de l'**ELT** : les données sont déposées puis transformées dans
-le moteur analytique.
+L'extraction SQLite vers événements JSON est une étape **ETL** légère : les
+champs JSON sont décodés et normalisés avant publication. Le passage par
+Redpanda et le sink ajoute la dimension **streaming** : la table Iceberg
+enrichie par append continu remplace le batch déposé. Les agrégations Spark
+sont plus proches de l'**ELT** : les données sont déposées puis transformées
+dans le moteur analytique.

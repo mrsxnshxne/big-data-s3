@@ -1,21 +1,23 @@
 # OpenCode Observatory
 
 Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
-SQLite locale d'OpenCode, transforme les données en jeux Parquet, les stocke
-dans un objet S3 compatible, les publie dans un catalogue Apache Iceberg et les
-interroge avec DuckDB dans un dashboard Streamlit.
+SQLite locale d'OpenCode, publie les changements sous forme d'événements dans
+un broker Redpanda, les écrit en continu dans des tables Apache Iceberg
+(stockées sur un objet S3 compatible) et les interroge avec DuckDB dans un
+dashboard Streamlit.
 
 ```text
 opencode.db
-    -> ingest.py
-    -> Parquet (sessions, messages, parts, tools)
-    -> RustFS / S3
+    -> produce.py (watermark incrémental)
+    -> Redpanda (topics opencode.sessions/messages/parts/tools)
+    -> sink.py (append par lots)
     -> Apache Iceberg REST
-    -> DuckDB
+    -> RustFS / S3 (warehouse)
+    -> DuckDB + déduplication
     -> Streamlit
 ```
 
-Apache Spark fournit en parallèle des agrégats analytiques :
+Apache Spark lit les mêmes tables Iceberg et fournit des agrégats analytiques :
 `daily_activity`, `session_summary`, `tool_usage` et `model_usage`.
 
 > Ce projet n'est pas un scraper web. Il collecte les données déjà présentes
@@ -25,7 +27,8 @@ Apache Spark fournit en parallèle des agrégats analytiques :
 
 - [Documentation complète](docs/README.md)
 - [Architecture et flux](docs/architecture.md)
-- [Extraction et modèle de données](docs/ingestion.md)
+- [Extraction et producteur d'événements](docs/ingestion.md)
+- [Redpanda et flux d'événements](docs/redpanda.md)
 - [RustFS et S3](docs/s3.md)
 - [Apache Iceberg](docs/iceberg.md)
 - [Data Lake, Data Warehouse et Lakehouse](docs/concepts.md)
@@ -49,21 +52,26 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d rustfs iceberg-rest
+docker-compose up -d                 # rustfs, iceberg-rest, redpanda, sink
 set -a; . ./.env; set +a
 ./opencode-analytics.sh sync
-./opencode-spark.sh
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-Pour synchroniser automatiquement toutes les 30 secondes :
+Pour publier automatiquement toutes les 30 secondes :
 
 ```sh
 ./opencode-analytics.sh enable
 ./opencode-analytics.sh status
 ./opencode-analytics.sh disable
+```
+
+Le sink peut aussi tourner hors Docker dans un terminal dédié :
+
+```sh
+python3 sink.py
 ```
 
 Le venv peut être désactivé avec :
@@ -74,7 +82,7 @@ Le venv peut être désactivé avec :
 
 ## Dashboard Docker
 
-Le dashboard peut aussi récupérer les Parquet depuis RustFS :
+Le dashboard peut aussi tourner dans Docker et lire Iceberg via le catalogue :
 
 ```sh
 docker-compose --profile dashboard up --build dashboard
@@ -86,25 +94,28 @@ Le service est exposé sur `127.0.0.1:8501`. Pour un serveur distant, utilisez u
 ssh -N -L 8501:127.0.0.1:8501 utilisateur@serveur
 ```
 
-La synchronisation publie les tables `analytics.sessions`, `analytics.messages`,
-`analytics.parts` et `analytics.tools` dans le catalogue Iceberg. Le dashboard
-Docker les lit via `iceberg-rest`; en local, `.env` utilise `localhost:8181`.
+La synchronisation alimente les tables `analytics.sessions`,
+`analytics.messages`, `analytics.parts` et `analytics.tools` dans le catalogue
+Iceberg. Le dashboard Docker les lit via `iceberg-rest`; en local, `.env`
+utilise `localhost:8181`.
 
 ## Couche Spark
 
-En local, avec Java et PySpark installes :
+En local, avec Java et PySpark installés :
 
 ```sh
 pip install -r requirements-spark.txt
-./opencode-spark.sh --input data/parquet --output data/spark
+set -a; . ./.env; set +a
+./opencode-spark.sh --output data/spark
 ```
 
-Pour executer Spark dans Docker et lire les Parquet depuis RustFS :
+Pour exécuter Spark dans Docker et lire les tables Iceberg du warehouse :
 
 ```sh
 docker-compose --profile spark run --rm spark
 ```
 
-Les sorties locales sont ignorées par Git. Pour une sortie S3, utilisez
-`SPARK_INPUT=s3a://opencode-analytics/parquet` et
-`SPARK_OUTPUT=s3a://opencode-analytics/spark`.
+Le job lit le catalogue Iceberg (`ICEBERG_CATALOG_URI`) et déduplique chaque
+table par identifiant. Sortie par défaut dans le warehouse :
+`SPARK_OUTPUT=s3a://iceberg-warehouse/spark`. Sans `ICEBERG_CATALOG_URI`, il
+retombe sur la lecture Parquet locale via `SPARK_INPUT`.
