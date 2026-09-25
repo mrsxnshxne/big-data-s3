@@ -57,17 +57,28 @@ def timestamp(value: Any) -> pd.Timestamp | None:
     return pd.to_datetime(value, unit="ms", utc=True)
 
 
+def part_text(value: Any) -> str:
+    if isinstance(value, list):
+        return "\n".join(text(item) for item in value)
+    return text(value)
+
+
 def extract(database: Path, watermarks: dict[str, int]) -> dict[str, pd.DataFrame]:
-    """Read every row updated after the stored watermark for each dataset."""
+    """Read every row updated after the stored watermark for each dataset.
+
+    OpenCode stores its history in the ``session_v2`` and ``session_message``
+    tables; message parts (text, reasoning, tool calls) are embedded in the
+    JSON ``data`` column of each message rather than living in their own
+    table. The parts and tools watermarks therefore track message updates.
+    """
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     try:
         sessions = [dict(row) for row in connection.execute(
-            "select * from session where time_updated > ? order by time_updated", (watermarks.get("sessions", 0),))]
+            "select * from session_v2 where time_updated > ? order by time_updated", (watermarks.get("sessions", 0),))]
         messages = [dict(row) for row in connection.execute(
-            "select * from message where time_updated > ? order by time_updated", (watermarks.get("messages", 0),))]
-        parts = [dict(row) for row in connection.execute(
-            "select * from part where time_updated > ? order by time_updated", (watermarks.get("parts", 0),))]
+            "select * from session_message where type in ('user', 'assistant') and time_updated > ? order by time_updated",
+            (min(watermarks.get(name, 0) for name in ("messages", "parts", "tools")),))]
     finally:
         connection.close()
 
@@ -87,51 +98,60 @@ def extract(database: Path, watermarks: dict[str, int]) -> dict[str, pd.DataFram
             "_watermark": row["time_updated"],
         })
 
-    message_rows = []
+    message_records = []
+    part_records = []
+    tool_records = []
     for row in messages:
         data = obj(row["data"])
         tokens = obj(data.get("tokens"))
-        message_rows.append({
-            "message_id": row["id"], "session_id": row["session_id"],
-            "role": data.get("role", "unknown"), "agent": data.get("agent", ""),
-            "model": data.get("modelID", ""), "finish": data.get("finish", ""),
-            "cost": data.get("cost", 0) or 0,
-            "tokens_input": tokens.get("input", 0) or 0,
-            "tokens_output": tokens.get("output", 0) or 0,
-            "tokens_reasoning": tokens.get("reasoning", 0) or 0,
-            "created_at": timestamp(row["time_created"]),
-            "updated_at": timestamp(row["time_updated"]),
-            "_watermark": row["time_updated"],
-        })
-
-    part_rows = []
-    tool_rows = []
-    for row in parts:
-        data = obj(row["data"])
-        kind = data.get("type", "unknown")
-        content = text(data.get("text", data.get("content", "")))
-        part_rows.append({
-            "part_id": row["id"], "message_id": row["message_id"], "session_id": row["session_id"],
-            "type": kind, "text": content,
-            "created_at": timestamp(row["time_created"]),
-            "updated_at": timestamp(row["time_updated"]),
-            "_watermark": row["time_updated"],
-        })
-        if kind == "tool":
-            state = obj(data.get("state"))
-            tool_rows.append({
-                "part_id": row["id"], "message_id": row["message_id"], "session_id": row["session_id"],
-                "tool": data.get("tool", "unknown"), "call_id": data.get("callID", ""),
-                "status": state.get("status", ""), "input": json.dumps(state.get("input", {}), ensure_ascii=False),
-                "output": text(state.get("output", state.get("metadata", {}).get("output", ""))),
-                "started_at": timestamp(obj(state.get("time")).get("start", row["time_created"])),
+        model = obj(data.get("model"))
+        if row["time_updated"] > watermarks.get("messages", 0):
+            message_records.append({
+                "message_id": row["id"], "session_id": row["session_id"],
+                "role": row["type"], "agent": data.get("agent") or (data.get("agents") or [""])[0],
+                "model": model.get("id", ""), "finish": data.get("finish", ""),
+                "cost": data.get("cost", 0) or 0,
+                "tokens_input": tokens.get("input", 0) or 0,
+                "tokens_output": tokens.get("output", 0) or 0,
+                "tokens_reasoning": tokens.get("reasoning", 0) or 0,
                 "created_at": timestamp(row["time_created"]),
                 "updated_at": timestamp(row["time_updated"]),
                 "_watermark": row["time_updated"],
             })
 
+        parts = data.get("content")
+        if row["type"] == "user" and not isinstance(parts, list):
+            parts = [{"type": "text", "text": data.get("text", "")}]
+        for index, part in enumerate(parts if isinstance(parts, list) else []):
+            part = obj(part)
+            kind = part.get("type", "unknown")
+            part_id = str(part.get("id") or f"{row['id']}:{index}")
+            part_time = obj(part.get("time")).get("created", row["time_created"])
+            if row["time_updated"] > watermarks.get("parts", 0):
+                part_records.append({
+                    "part_id": part_id, "message_id": row["id"], "session_id": row["session_id"],
+                    "type": kind, "text": part_text(part.get("text", "")),
+                    "created_at": timestamp(part_time),
+                    "updated_at": timestamp(row["time_updated"]),
+                    "_watermark": row["time_updated"],
+                })
+            if kind == "tool" and row["time_updated"] > watermarks.get("tools", 0):
+                state = obj(part.get("state"))
+                time = obj(part.get("time"))
+                tool_records.append({
+                    "part_id": part_id, "message_id": row["id"], "session_id": row["session_id"],
+                    "tool": part.get("name", "unknown"), "call_id": str(part.get("id", "")),
+                    "status": state.get("status", ""),
+                    "input": json.dumps(state.get("input", {}), ensure_ascii=False),
+                    "output": part_text(state.get("content", state.get("error", ""))),
+                    "started_at": timestamp(time.get("ran", time.get("created", row["time_created"]))),
+                    "created_at": timestamp(time.get("created", row["time_created"])),
+                    "updated_at": timestamp(row["time_updated"]),
+                    "_watermark": row["time_updated"],
+                })
+
     frames = {}
-    for name, rows in (("sessions", session_rows), ("messages", message_rows), ("parts", part_rows), ("tools", tool_rows)):
+    for name, rows in (("sessions", session_rows), ("messages", message_records), ("parts", part_records), ("tools", tool_records)):
         frames[name] = pd.DataFrame(rows, columns=COLUMNS[name] + ["_watermark"])
     return frames
 

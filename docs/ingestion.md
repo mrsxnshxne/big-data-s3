@@ -6,7 +6,10 @@
 par défaut est `~/.local/share/opencode/opencode.db`, surchargeable par
 `OPENCODE_DB` ou `--database`.
 
-Les tables source utilisées sont `session`, `message` et `part`. Les colonnes
+Les tables source utilisées sont `session_v2` et `session_message` (schéma
+OpenCode v2). Les parts d'un message (texte, raisonnement, appels d'outils)
+sont stockées dans le tableau JSON `content` de `session_message.data` et sont
+éclatées par le producteur dans les datasets `parts` et `tools`. Les colonnes
 JSON de la source sont décodées avec des valeurs de repli afin qu'une donnée
 partiellement vide ne bloque pas toute l'extraction.
 
