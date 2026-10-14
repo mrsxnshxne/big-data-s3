@@ -1,8 +1,9 @@
 #!/bin/sh
 # Publie les nouvelles lignes d'OpenCode dans Redpanda (une exécution).
-# Conçu pour cron, qui ne charge pas l'environnement du shell : le .env du
-# projet est donc lu ici. Exemple de crontab (toutes les minutes) :
-#   * * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
+# Lancé par le plugin opencode-plugin/observatory.js après chaque réponse, et
+# par cron en rattrapage. Cron ne charge pas l'environnement du shell : le .env
+# du projet est donc lu ici. Exemple de crontab (toutes les heures) :
+#   0 * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
 
 set -eu
 

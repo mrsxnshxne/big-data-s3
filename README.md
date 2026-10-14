@@ -59,11 +59,20 @@ streamlit run app.py --server.address=127.0.0.1
 
 Dashboard : <http://localhost:8501>
 
-Pour publier automatiquement, ajoutez le script à la crontab (`crontab -e`).
-Il charge lui-même `.env`, puisque cron ne lit pas l'environnement du shell :
+La publication est déclenchée par le plugin OpenCode
+`opencode-plugin/observatory.js` : à la fin de chaque réponse de l'agent, il
+lance `opencode-analytics.sh`. Pour l'installer, puis redémarrer OpenCode :
+
+```sh
+ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/
+```
+
+Une entrée cron horaire sert de filet de sécurité (Redpanda ou tunnel
+indisponible au moment d'une réponse). Le script charge lui-même `.env`,
+puisque cron ne lit pas l'environnement du shell (`crontab -e`) :
 
 ```cron
-* * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
+0 * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
 ```
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :

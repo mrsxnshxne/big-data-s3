@@ -52,16 +52,45 @@ python3 produce.py --dry-run
 python3 produce.py --full
 ```
 
-## Synchronisation périodique (cron)
+## Publication automatique : plugin OpenCode + cron
 
 `./opencode-analytics.sh` exécute une publication : il charge `.env`, choisit
 le Python du venv et transmet ses arguments à `produce.py`
-(`./opencode-analytics.sh --dry-run` fonctionne). Pour publier automatiquement, ajoutez le script à la crontab (`crontab -e`).
-Il charge lui-même `.env`, puisque cron ne lit pas l'environnement du shell :
+(`./opencode-analytics.sh --dry-run` fonctionne).
+
+La publication est déclenchée par le plugin OpenCode
+`opencode-plugin/observatory.js` : à la fin de chaque réponse de l'agent, il
+lance `opencode-analytics.sh`. Pour l'installer, puis redémarrer OpenCode :
+
+```sh
+ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/
+```
+
+Une entrée cron horaire sert de filet de sécurité (Redpanda ou tunnel
+indisponible au moment d'une réponse). Le script charge lui-même `.env`,
+puisque cron ne lit pas l'environnement du shell (`crontab -e`) :
 
 ```cron
-* * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
+0 * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
 ```
+
+Fonctionnement du plugin :
+
+- il s'abonne aux événements OpenCode 2 (`ctx.event.subscribe`) et réagit à
+  `session.execution.succeeded`, `failed` et `interrupted`, c'est-à-dire à la
+  fin d'une réponse, y compris partielle ;
+- les événements sont regroupés pendant 2 secondes (sous-agents qui terminent
+  ensemble), puis une seule publication est lancée ; si une publication est
+  déjà en cours, une seule autre est relancée à sa suite ;
+- il ne fait que **déclencher** `produce.py` : l'API des plugins d'OpenCode 2
+  ne permet pas de lister les messages d'une session, et réutiliser le
+  producteur évite de dupliquer en JavaScript l'extraction et la
+  sérialisation Avro ;
+- ses messages (`[plugin] ready…`, erreurs) et la sortie du producteur sont
+  ajoutés à `opencode-analytics.log`.
+
+Les doublons possibles (plugin et cron simultanés) sont sans effet : les
+lecteurs gardent la dernière version de chaque ligne.
 
 Le sink, lui, tourne en continu : `python3 sink.py` ou
 `docker-compose up -d sink`.

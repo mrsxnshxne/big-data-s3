@@ -39,6 +39,7 @@ Le flux est continu :
 
 | Composant | Rôle |
 | --- | --- |
+| Plugin OpenCode (JS) | Déclenche la publication à la fin de chaque réponse |
 | Python, SQLite, pandas | Extraction et normalisation de la base OpenCode |
 | Redpanda | Broker de streaming compatible Kafka |
 | confluent-kafka | Producteur et consommateur côté Python, sérialisation Avro |
