@@ -1,9 +1,20 @@
 # Extraction et producteur d'événements
 
-Le producteur est le plugin OpenCode `opencode-plugin/observatory.js`.
-Installation, désinstallation, configuration et dépannage sont décrits dans
-[son README](../opencode-plugin/README.md) ; cette page détaille les données
-qu'il produit.
+Deux producteurs alimentent les mêmes topics :
+
+- le plugin OpenCode `opencode-plugin/observatory.js`, détaillé ci-dessous ;
+- le producteur Claude Code `claude-code-plugin/observatory.js`, qui lit les
+  transcripts `~/.claude/projects/**/*.jsonl` et réutilise l'encodeur Avro et
+  le client Redpanda du premier (voir [son README](../claude-code-plugin/README.md)).
+
+Chaque événement porte une colonne `source` (`opencode` ou `claude-code`).
+Les événements publiés avant l'ajout de cette colonne n'en ont pas ; les
+lecteurs les rattachent à `opencode`. Le sink ajoute la colonne aux tables
+Iceberg existantes lors du premier append qui la contient.
+
+Pour le plugin OpenCode, installation, désinstallation, configuration et
+dépannage sont décrits dans [son README](../opencode-plugin/README.md) ; la
+suite de cette page détaille les données qu'il produit.
 
 ## Source
 

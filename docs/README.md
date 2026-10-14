@@ -11,11 +11,11 @@ Iceberg, moteur SQL DuckDB, traitement distribué Spark et interface Streamlit.
 ## Vue d'ensemble
 
 ```text
-SQLite OpenCode
-    |
-    | plugin OpenCode : à chaque fin de réponse, lecture seule,
-    | watermark incrémental, encodage Avro
-    v
+SQLite OpenCode                 transcripts Claude Code (~/.claude/projects)
+    |                               |
+    | plugin OpenCode               | producteur Claude Code (hook Stop)
+    | (fin de réponse, lecture seule, watermark incrémental, Avro, colonne source)
+    v                               v
 Redpanda (HTTP Proxy, Schema Registry, topics opencode.*)
     |
     | sink streaming, append par lots

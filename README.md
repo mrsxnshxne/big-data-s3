@@ -1,14 +1,16 @@
 # OpenCode Observatory
 
-Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
-SQLite locale d'OpenCode depuis un plugin OpenCode, publie les changements sous forme d'événements dans
+Pipeline local d'analyse des conversations OpenCode et Claude Code. Le projet
+extrait la base SQLite locale d'OpenCode depuis un plugin OpenCode et les
+transcripts de Claude Code (`~/.claude/projects`), publie les changements sous forme d'événements dans
 un broker Redpanda, les écrit en continu dans des tables Apache Iceberg
 (stockées sur un objet S3 compatible) et les interroge avec DuckDB dans un
 dashboard Streamlit.
 
 ```text
-opencode.db
-    -> plugin OpenCode (fin de chaque réponse, watermark incrémental, Avro)
+opencode.db                      ~/.claude/projects/*.jsonl
+    -> plugin OpenCode               -> producteur Claude Code (hook Stop)
+       (fin de chaque réponse, watermark incrémental, Avro, colonne source)
     -> Redpanda (topics opencode.sessions/messages/parts/tools)
     -> sink.py (append par lots)
     -> Apache Iceberg REST
@@ -69,6 +71,18 @@ ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observato
 Le plugin publie aussi au démarrage d'OpenCode ce qui n'a pas pu partir.
 Désinstallation, configuration et fonctionnement détaillé :
 [opencode-plugin/README.md](opencode-plugin/README.md).
+
+### Claude Code
+
+```sh
+node claude-code-plugin/observatory.js   # première publication de l'historique
+```
+
+Pour publier à la fin de chaque réponse, ajoutez le hook `Stop` décrit dans
+[claude-code-plugin/README.md](claude-code-plugin/README.md). Les lignes portent
+`source = "claude-code"` ; le dashboard propose un filtre **Source**
+(Tous / OpenCode / Claude Code). Le coût Claude Code est **estimé** à partir
+des tarifs API par modèle.
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :
 
