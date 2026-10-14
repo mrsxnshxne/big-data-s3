@@ -54,32 +54,29 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
-node opencode-plugin/observatory.js  # première publication de l'historique
+docker-compose up -d                  # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
+node plugins/opencode/observatory.js  # historique OpenCode
+node plugins/claude/observatory.js    # historique Claude Code
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-Pour publier automatiquement à la fin de chaque réponse, installez le plugin
-OpenCode, puis redémarrez OpenCode :
+### Plugins de collecte
 
-```sh
-ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
-```
+Les producteurs sont dans [`plugins/`](plugins/README.md), un dossier par
+outil. Chacun a son guide d'installation et de désinstallation :
 
-Le plugin publie aussi au démarrage d'OpenCode ce qui n'a pas pu partir.
-Désinstallation, configuration et fonctionnement détaillé :
-[opencode-plugin/README.md](opencode-plugin/README.md).
+| Outil | Guide |
+| --- | --- |
+| OpenCode | [plugins/opencode/README.md](plugins/opencode/README.md#installation) |
+| Claude Code | [plugins/claude/README.md](plugins/claude/README.md#installation) |
 
-### Claude Code
+> Si le plugin OpenCode a été installé quand il était dans `opencode-plugin/`,
+> son lien est cassé : voir
+> [la migration](plugins/opencode/README.md#migration-depuis-opencode-plugin).
 
-```sh
-node claude-code-plugin/observatory.js   # première publication de l'historique
-```
-
-Pour publier à la fin de chaque réponse, ajoutez le hook `Stop` décrit dans
-[claude-code-plugin/README.md](claude-code-plugin/README.md). Les lignes portent
+Les lignes portent
 `source = "claude-code"` ; le dashboard propose un filtre **Source**
 (Tous / OpenCode / Claude Code). Le coût Claude Code est **estimé** à partir
 des tarifs API par modèle.

@@ -77,7 +77,7 @@ Iceberg, le dashboard affiche une erreur qui rappelle les étapes du pipeline.
 
 ## Synchronisation continue
 
-Le plugin `opencode-plugin/observatory.js` publie dès qu'une réponse de
+Le plugin `plugins/opencode/observatory.js` publie dès qu'une réponse de
 l'agent se termine, et au démarrage d'OpenCode pour rattraper ce qui aurait
 été manqué. Le watermark
 par dataset est persisté dans `PRODUCER_STATE_FILE` ; l'état d'avancement de

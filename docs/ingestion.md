@@ -2,10 +2,10 @@
 
 Deux producteurs alimentent les mêmes topics :
 
-- le plugin OpenCode `opencode-plugin/observatory.js`, détaillé ci-dessous ;
-- le producteur Claude Code `claude-code-plugin/observatory.js`, qui lit les
+- le plugin OpenCode `plugins/opencode/observatory.js`, détaillé ci-dessous ;
+- le producteur Claude Code `plugins/claude/observatory.js`, qui lit les
   transcripts `~/.claude/projects/**/*.jsonl` et réutilise l'encodeur Avro et
-  le client Redpanda du premier (voir [son README](../claude-code-plugin/README.md)).
+  le client Redpanda du premier (voir [son README](../plugins/claude/README.md)).
 
 Chaque événement porte une colonne `source` (`opencode` ou `claude-code`).
 Les événements publiés avant l'ajout de cette colonne n'en ont pas ; les
@@ -13,7 +13,7 @@ lecteurs les rattachent à `opencode`. Le sink ajoute la colonne aux tables
 Iceberg existantes lors du premier append qui la contient.
 
 Pour le plugin OpenCode, installation, désinstallation, configuration et
-dépannage sont décrits dans [son README](../opencode-plugin/README.md) ; la
+dépannage sont décrits dans [son README](../plugins/opencode/README.md) ; la
 suite de cette page détaille les données qu'il produit.
 
 ## Source
@@ -80,13 +80,13 @@ Le même fichier s'exécute en ligne de commande (Node 22.13 ou plus récent) :
 
 ```sh
 # Publier uniquement les nouvelles lignes
-node opencode-plugin/observatory.js
+node plugins/opencode/observatory.js
 
 # Compter les événements en attente sans contacter Redpanda
-node opencode-plugin/observatory.js --dry-run
+node plugins/opencode/observatory.js --dry-run
 
 # Republier tout l'historique (par exemple après une remise à zéro de la stack)
-node opencode-plugin/observatory.js --full
+node plugins/opencode/observatory.js --full
 ```
 
 Le sink, lui, tourne en continu : `python3 sink.py` ou

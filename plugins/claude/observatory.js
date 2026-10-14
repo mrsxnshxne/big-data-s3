@@ -7,14 +7,14 @@
 // as the OpenCode plugin, tagged source = "claude-code", and publishes them
 // with the OpenCode plugin's Avro encoder and Redpanda client.
 //
-// Usage: node claude-code-plugin/observatory.js [--full] [--dry-run] [--log]
+// Usage: node plugins/claude/observatory.js [--full] [--dry-run] [--log]
 // Run it from a Claude Code Stop hook to publish after every answer
-// (see claude-code-plugin/README.md).
+// (see plugins/claude/README.md).
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig, publish } from "../opencode-plugin/observatory.js";
+import { loadConfig, publish } from "../opencode/observatory.js";
 
 const FILE = realpathSync(fileURLToPath(import.meta.url));
 const DATASETS = ["sessions", "messages", "parts", "tools"];
@@ -328,7 +328,7 @@ if (isCommandLine()) {
     } catch {}
   };
   if (args.has("--help") || args.has("-h")) {
-    console.log("Usage: node claude-code-plugin/observatory.js [--full] [--dry-run] [--log]");
+    console.log("Usage: node plugins/claude/observatory.js [--full] [--dry-run] [--log]");
   } else {
     sync({ full: args.has("--full"), dryRun: args.has("--dry-run") })
       .then(report)

@@ -75,37 +75,91 @@ démarrage.
 
 ## Installation
 
-Le plugin s'installe par un lien symbolique : il reste dans le dépôt, et
-retrouve à partir de son vrai chemin les schémas, le `.env` et le fichier
-d'état du projet.
+Le plugin s'installe par un **lien symbolique** : le fichier reste dans le
+dépôt, et retrouve à partir de son vrai chemin les schémas, le `.env` et le
+fichier d'état du projet. Toutes les commandes se lancent **depuis la racine
+du dépôt**.
+
+1. Préparer le projet (une seule fois) :
+
+   ```sh
+   cp -n .env.example .env        # puis ajuster les URL de Redpanda si besoin
+   docker-compose up -d           # Redpanda, sink, Iceberg, RustFS
+   ```
+
+2. Vérifier que le plugin trouve la base OpenCode, sans rien envoyer :
+
+   ```sh
+   node plugins/opencode/observatory.js --dry-run
+   # dry run: pending events -> 12 sessions, 340 messages, …
+   ```
+
+3. Créer le lien dans le dossier des plugins d'OpenCode :
+
+   ```sh
+   mkdir -p ~/.config/opencode/plugins
+   ln -sfn "$PWD/plugins/opencode/observatory.js" ~/.config/opencode/plugins/observatory.js
+   ```
+
+4. **Redémarrer OpenCode**, puis contrôler le journal :
+
+   ```sh
+   tail -f opencode-analytics.log
+   # … [observatory] ready for /chemin/du/projet
+   # … [observatory] produced to opencode.* -> 0 sessions, 2 messages, 5 parts, 1 tools
+   ```
+
+   Le lien doit pointer vers un fichier existant :
+
+   ```sh
+   ls -lL ~/.config/opencode/plugins/observatory.js
+   ```
+
+La première synchronisation, au démarrage d'OpenCode, publie tout l'historique.
+Ensuite, chaque fin de réponse publie le delta.
+
+### Mise à jour
+
+Le lien pointe vers le dépôt : un `git pull` met le plugin à jour. Il suffit
+ensuite de redémarrer OpenCode.
+
+### Migration depuis `opencode-plugin/`
+
+Le plugin se trouvait auparavant dans `opencode-plugin/observatory.js`. Après
+la mise à jour du dépôt, un lien créé avec l'ancien chemin est **cassé** et
+OpenCode ne charge plus le plugin. Pour le vérifier, puis le recréer :
 
 ```sh
-mkdir -p ~/.config/opencode/plugins
-ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
+readlink ~/.config/opencode/plugins/observatory.js   # …/opencode-plugin/observatory.js = ancien chemin
+ln -sfn "$PWD/plugins/opencode/observatory.js" ~/.config/opencode/plugins/observatory.js
 ```
 
-Redémarrez ensuite OpenCode. Le journal doit afficher le chargement du
-plugin, puis la synchronisation de démarrage :
-
-```sh
-tail -f opencode-analytics.log
-# … [observatory] ready for /chemin/du/projet
-# … [observatory] produced to opencode.* -> 0 sessions, 2 messages, 5 parts, 1 tools
-```
-
-Une mise à jour du dépôt (`git pull`) met aussi le plugin à jour, il suffit de
-redémarrer OpenCode.
+Redémarrez OpenCode. L'état (`data/state/producer-state.json`) est conservé :
+rien n'est republié.
 
 ## Désinstallation
 
-```sh
-rm ~/.config/opencode/plugins/observatory.js
-```
+1. Supprimer le lien (le fichier du dépôt n'est pas touché) :
 
-Redémarrez OpenCode. Le plugin ne laisse rien d'autre que son journal
-(`opencode-analytics.log`) et son état (`data/state/producer-state.json`) dans
-le dépôt ; les supprimer est sans risque. Sans état, la prochaine
-synchronisation republie tout l'historique.
+   ```sh
+   rm ~/.config/opencode/plugins/observatory.js
+   ```
+
+2. **Redémarrer OpenCode.** La ligne `ready for` ne doit plus apparaître
+   dans `opencode-analytics.log`.
+
+3. Facultatif, nettoyer le dépôt :
+
+   ```sh
+   rm -f data/state/producer-state.json opencode-analytics.log
+   ```
+
+   Sans état, une réinstallation republie tout l'historique. Les doublons qui
+   en résultent sont sans effet : les lecteurs gardent la dernière version de
+   chaque ligne.
+
+Les données déjà publiées restent dans Redpanda et Iceberg. La désinstallation
+arrête seulement la collecte.
 
 ## Configuration
 
@@ -125,9 +179,9 @@ donc le `.env` du dépôt. Une variable d'environnement réelle l'emporte sur le
 ## Ligne de commande
 
 ```sh
-node opencode-plugin/observatory.js             # publier les nouvelles lignes
-node opencode-plugin/observatory.js --dry-run   # compter les événements en attente, sans réseau
-node opencode-plugin/observatory.js --full      # ignorer le watermark et tout republier
+node plugins/opencode/observatory.js             # publier les nouvelles lignes
+node plugins/opencode/observatory.js --dry-run   # compter les événements en attente, sans réseau
+node plugins/opencode/observatory.js --full      # ignorer le watermark et tout republier
 ```
 
 `--full` est utile après une remise à zéro de Redpanda ou d'Iceberg. Les

@@ -43,7 +43,7 @@ Le pipeline complet doit tourner :
 
 ```sh
 docker-compose up -d rustfs iceberg-rest redpanda redpanda-topics sink
-node opencode-plugin/observatory.js
+node plugins/opencode/observatory.js
 ```
 
 Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
@@ -53,13 +53,13 @@ Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
 Lire `opencode-analytics.log` : le plugin y écrit son chargement
 (`ready for …`), chaque publication et chaque erreur. Les causes courantes
 (lien absent, HTTP Proxy injoignable, schéma incompatible) sont détaillées
-dans [le README du plugin](../opencode-plugin/README.md#dépannage).
+dans [le README du plugin](../plugins/opencode/README.md#dépannage).
 
 ### Le producteur ne publie rien
 
 C'est normal si rien n'a changé depuis le dernier watermark. Contrôler avec
-`node opencode-plugin/observatory.js --dry-run`. Forcer une republication
-complète avec `node opencode-plugin/observatory.js --full`.
+`node plugins/opencode/observatory.js --dry-run`. Forcer une republication
+complète avec `node plugins/opencode/observatory.js --full`.
 
 ### Le sink ne consomme pas
 
@@ -88,7 +88,7 @@ service Docker l'ajoutent). En Docker, utiliser les chemins `s3a://` et non
 
 Le plugin OpenCode peut rester installé : stack arrêtée, il journalise
 l'échec et rattrapera au prochain démarrage d'OpenCode. Pour l'arrêter
-complètement, le désinstaller ([README du plugin](../opencode-plugin/README.md#désinstallation)).
+complètement, le désinstaller ([README du plugin](../plugins/opencode/README.md#désinstallation)).
 
 ```sh
 docker-compose --profile dashboard down

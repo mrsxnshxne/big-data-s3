@@ -245,8 +245,8 @@ available_tables = {row[0] for row in connection.execute("show tables").fetchall
 if "sessions" not in available_tables:
     st.error(
         "Aucune donnée dans Iceberg. Démarrez Redpanda et le sink "
-        "(`docker-compose up -d redpanda sink`), puis lancez `node opencode-plugin/observatory.js` "
-        "ou `node claude-code-plugin/observatory.js`."
+        "(`docker-compose up -d redpanda sink`), puis lancez `node plugins/opencode/observatory.js` "
+        "ou `node plugins/claude/observatory.js`."
     )
     st.stop()
 

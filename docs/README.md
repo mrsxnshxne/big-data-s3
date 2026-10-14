@@ -28,7 +28,7 @@ Iceberg REST --> warehouse sur RustFS/S3
 
 Le flux est continu :
 
-1. Le plugin OpenCode `opencode-plugin/observatory.js` lit `opencode.db`
+1. Le plugin OpenCode `plugins/opencode/observatory.js` lit `opencode.db`
    sans la modifier à la fin de chaque réponse, et ne publie que les lignes
    nouvelles ou modifiées vers Redpanda.
 2. `sink.py` consomme les topics et **append** les événements dans les tables
@@ -61,10 +61,14 @@ python3 -m venv .venv
 pip install -r requirements.txt
 cp .env.example .env
 docker-compose up -d            # rustfs, iceberg-rest, redpanda, topics, sink
-node opencode-plugin/observatory.js
-ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
+node plugins/opencode/observatory.js   # historique OpenCode
+node plugins/claude/observatory.js     # historique Claude Code
 streamlit run app.py --server.address=127.0.0.1
 ```
+
+Pour publier automatiquement à chaque réponse, installez les plugins en
+suivant leurs guides : [OpenCode](../plugins/opencode/README.md#installation)
+et [Claude Code](../plugins/claude/README.md#installation).
 
 Le dashboard est disponible sur <http://localhost:8501>. Pour lancer le
 dashboard dans Docker :
@@ -77,7 +81,9 @@ docker-compose --profile dashboard up --build dashboard
 
 - [Architecture et flux](architecture.md)
 - [Extraction et producteur d'événements](ingestion.md)
-- [Plugin OpenCode : installation et fonctionnement](../opencode-plugin/README.md)
+- [Plugins de collecte](../plugins/README.md)
+  - [OpenCode : installation, désinstallation, fonctionnement](../plugins/opencode/README.md)
+  - [Claude Code : installation, désinstallation, fonctionnement](../plugins/claude/README.md)
 - [Redpanda et flux d'événements](redpanda.md)
 - [RustFS et S3](s3.md)
 - [Apache Iceberg](iceberg.md)
@@ -93,7 +99,7 @@ docker-compose --profile dashboard up --build dashboard
   versions multiples, dédupliquées à la lecture, jamais supprimées.
 - Si le volume `iceberg-catalog` est supprimé, les offsets Kafka déjà
   committés ne sont pas rejoués. Republier l'historique avec
-  `node opencode-plugin/observatory.js --full`.
+  `node plugins/opencode/observatory.js --full`.
 - Il n'y a pas de traitement des suppressions OpenCode ; `--full` republie
   l'historique complet.
 - Les identifiants de l'exemple sont destinés au développement local et doivent
