@@ -23,7 +23,7 @@ tables.
 - Tables : `analytics.sessions`, `analytics.messages`,
   `analytics.parts`, `analytics.tools`
 
-Ce n'est plus `produce.py` qui écrit dans Iceberg : le sink streaming charge le
+Le producteur (le plugin OpenCode) n'écrit pas dans Iceberg : le sink streaming charge le
 catalogue, crée le namespace et les tables manquantes (schéma dérivé d'un
 schéma PyArrow explicite dans `sink.py`), puis **append** les lots
 d'événements consommés depuis Redpanda.

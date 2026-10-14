@@ -13,9 +13,10 @@ Iceberg, moteur SQL DuckDB, traitement distribué Spark et interface Streamlit.
 ```text
 SQLite OpenCode
     |
-    | extraction en lecture seule, watermark incrémental
+    | plugin OpenCode : à chaque fin de réponse, lecture seule,
+    | watermark incrémental, encodage Avro
     v
-Redpanda (topics opencode.*)
+Redpanda (HTTP Proxy, Schema Registry, topics opencode.*)
     |
     | sink streaming, append par lots
     v
@@ -27,7 +28,8 @@ Iceberg REST --> warehouse sur RustFS/S3
 
 Le flux est continu :
 
-1. `produce.py` lit `opencode.db` sans la modifier et ne publie que les lignes
+1. Le plugin OpenCode `opencode-plugin/observatory.js` lit `opencode.db`
+   sans la modifier à la fin de chaque réponse, et ne publie que les lignes
    nouvelles ou modifiées vers Redpanda.
 2. `sink.py` consomme les topics et **append** les événements dans les tables
    Iceberg ; les données physiques atterrissent dans RustFS/S3.
@@ -39,10 +41,9 @@ Le flux est continu :
 
 | Composant | Rôle |
 | --- | --- |
-| Plugin OpenCode (JS) | Déclenche la publication à la fin de chaque réponse |
-| Python, SQLite, pandas | Extraction et normalisation de la base OpenCode |
-| Redpanda | Broker de streaming compatible Kafka |
-| confluent-kafka | Producteur et consommateur côté Python, sérialisation Avro |
+| Plugin OpenCode (JS, sans dépendance) | Extraction SQLite, encodage Avro, publication à la fin de chaque réponse |
+| Redpanda | Broker de streaming compatible Kafka, avec HTTP Proxy |
+| confluent-kafka | Consommateur Python du sink, décodage Avro |
 | Redpanda Schema Registry | Contrat Avro de chaque topic (`schemas/*.avsc`) |
 | RustFS | Stockage objet S3-compatible local (warehouse Iceberg) |
 | PyIceberg | Écriture des événements dans les tables Iceberg |
@@ -59,9 +60,9 @@ python3 -m venv .venv
 . ./venv.sh activate
 pip install -r requirements.txt
 cp .env.example .env
-docker-compose up -d            # rustfs, iceberg-rest, redpanda, sink
-set -a; . ./.env; set +a
-./opencode-analytics.sh sync
+docker-compose up -d            # rustfs, iceberg-rest, redpanda, topics, sink
+node opencode-plugin/observatory.js
+ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
 streamlit run app.py --server.address=127.0.0.1
 ```
 
@@ -76,6 +77,7 @@ docker-compose --profile dashboard up --build dashboard
 
 - [Architecture et flux](architecture.md)
 - [Extraction et producteur d'événements](ingestion.md)
+- [Plugin OpenCode : installation et fonctionnement](../opencode-plugin/README.md)
 - [Redpanda et flux d'événements](redpanda.md)
 - [RustFS et S3](s3.md)
 - [Apache Iceberg](iceberg.md)
@@ -89,11 +91,11 @@ docker-compose --profile dashboard up --build dashboard
   d'OpenCode.
 - Le pipeline est au-moins-une-fois : les tables Iceberg contiennent des
   versions multiples, dédupliquées à la lecture, jamais supprimées.
-- `iceberg-rest` garde son catalogue en mémoire : s'il est recréé, les offsets
-  Kafka déjà committés ne sont pas rejoués. Republier l'historique avec
-  `python3 produce.py --full` après avoir redémarré le catalogue.
-- Il n'y a pas de traitement des suppressions OpenCode ; `produce.py --full`
-  republie l'historique complet.
+- Si le volume `iceberg-catalog` est supprimé, les offsets Kafka déjà
+  committés ne sont pas rejoués. Republier l'historique avec
+  `node opencode-plugin/observatory.js --full`.
+- Il n'y a pas de traitement des suppressions OpenCode ; `--full` republie
+  l'historique complet.
 - Les identifiants de l'exemple sont destinés au développement local et doivent
   être changés dans un environnement partagé.
 - Les prompts, chemins, commandes et sorties d'outils peuvent être sensibles.

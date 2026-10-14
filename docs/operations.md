@@ -24,9 +24,10 @@ streamlit run app.py --server.address=127.0.0.1
 | Variable | Valeur par défaut | Usage |
 | --- | --- | --- |
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | Base source |
-| `PRODUCER_STATE_FILE` | `data/state/producer-state.json` | Watermarks du producteur |
+| `PRODUCER_STATE_FILE` | `data/state/producer-state.json` | Watermarks du plugin |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Broker Redpanda (hôte) |
 | `SCHEMA_REGISTRY_URL` | `http://localhost:8081` | Schema Registry Redpanda (hôte) |
+| `KAFKA_HTTP_PROXY_URL` | `http://localhost:8082` | HTTP Proxy Redpanda, utilisé par le plugin |
 | `KAFKA_TOPIC_PREFIX` | `opencode` | Préfixe des topics |
 | `KAFKA_CONSUMER_GROUP` | `opencode-iceberg-sink` | Groupe offsets du sink |
 | `SINK_MAX_RECORDS` | `2000` | Taille de lot Iceberg |
@@ -41,24 +42,24 @@ streamlit run app.py --server.address=127.0.0.1
 Le pipeline complet doit tourner :
 
 ```sh
-docker-compose up -d rustfs iceberg-rest redpanda sink
-./opencode-analytics.sh
+docker-compose up -d rustfs iceberg-rest redpanda redpanda-topics sink
+node opencode-plugin/observatory.js
 ```
 
 Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
 
-### Le producteur échoue à la sérialisation
+### Le plugin ne publie pas
 
-Un message `ValueError` / `SerializationError` signifie qu'un événement ne
-respecte pas `schemas/<dataset>.avsc`, ou que la nouvelle version d'un schéma
-n'est pas compatible avec la précédente dans le registry. Vérifier que
-`SCHEMA_REGISTRY_URL` répond (`curl -s $SCHEMA_REGISTRY_URL/subjects`).
+Lire `opencode-analytics.log` : le plugin y écrit son chargement
+(`ready for …`), chaque publication et chaque erreur. Les causes courantes
+(lien absent, HTTP Proxy injoignable, schéma incompatible) sont détaillées
+dans [le README du plugin](../opencode-plugin/README.md#dépannage).
 
 ### Le producteur ne publie rien
 
 C'est normal si rien n'a changé depuis le dernier watermark. Contrôler avec
-`python3 produce.py --dry-run`. Forcer une republication complète avec
-`python3 produce.py --full`.
+`node opencode-plugin/observatory.js --dry-run`. Forcer une republication
+complète avec `node opencode-plugin/observatory.js --full`.
 
 ### Le sink ne consomme pas
 
@@ -85,7 +86,9 @@ service Docker l'ajoutent). En Docker, utiliser les chemins `s3a://` et non
 
 ## Cycle d'arrêt
 
-Commenter la ligne cron (`crontab -e`), puis :
+Le plugin OpenCode peut rester installé : stack arrêtée, il journalise
+l'échec et rattrapera au prochain démarrage d'OpenCode. Pour l'arrêter
+complètement, le désinstaller ([README du plugin](../opencode-plugin/README.md#désinstallation)).
 
 ```sh
 docker-compose --profile dashboard down

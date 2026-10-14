@@ -1,14 +1,14 @@
 # OpenCode Observatory
 
 Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
-SQLite locale d'OpenCode, publie les changements sous forme d'événements dans
+SQLite locale d'OpenCode depuis un plugin OpenCode, publie les changements sous forme d'événements dans
 un broker Redpanda, les écrit en continu dans des tables Apache Iceberg
 (stockées sur un objet S3 compatible) et les interroge avec DuckDB dans un
 dashboard Streamlit.
 
 ```text
 opencode.db
-    -> produce.py (watermark incrémental)
+    -> plugin OpenCode (fin de chaque réponse, watermark incrémental, Avro)
     -> Redpanda (topics opencode.sessions/messages/parts/tools)
     -> sink.py (append par lots)
     -> Apache Iceberg REST
@@ -52,28 +52,23 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ schema registry), sink
-./opencode-analytics.sh
+docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
+node opencode-plugin/observatory.js  # première publication de l'historique
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-La publication est déclenchée par le plugin OpenCode
-`opencode-plugin/observatory.js` : à la fin de chaque réponse de l'agent, il
-lance `opencode-analytics.sh`. Pour l'installer, puis redémarrer OpenCode :
+Pour publier automatiquement à la fin de chaque réponse, installez le plugin
+OpenCode, puis redémarrez OpenCode :
 
 ```sh
-ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/
+ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
 ```
 
-Une entrée cron horaire sert de filet de sécurité (Redpanda ou tunnel
-indisponible au moment d'une réponse). Le script charge lui-même `.env`,
-puisque cron ne lit pas l'environnement du shell (`crontab -e`) :
-
-```cron
-0 * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
-```
+Le plugin publie aussi au démarrage d'OpenCode ce qui n'a pas pu partir.
+Désinstallation, configuration et fonctionnement détaillé :
+[opencode-plugin/README.md](opencode-plugin/README.md).
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :
 

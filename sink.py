@@ -1,6 +1,7 @@
 """Stream Redpanda events into Iceberg tables.
 
-This consumer subscribes to the OpenCode topics produced by ``produce.py``,
+This consumer subscribes to the OpenCode topics produced by the OpenCode
+plugin (``opencode-plugin/observatory.js``),
 decodes the Avro events with the schema fetched from the Redpanda Schema
 Registry, batches them and appends them to the ``analytics`` tables of the
 configured Iceberg catalog. The physical data lands in S3/RustFS because the
