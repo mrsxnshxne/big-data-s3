@@ -66,9 +66,15 @@ def read_tables(spark: SparkSession) -> dict[str, DataFrame]:
         raise RuntimeError("Set ICEBERG_CATALOG_URI to read the Iceberg tables")
     keys = {"sessions": "session_id", "messages": "message_id", "tools": "part_id"}
     return {
-        name: deduplicate(spark.table(f"{ICEBERG_CATALOG}.{ICEBERG_NAMESPACE}.{name}"), keys[name])
+        name: with_source(deduplicate(spark.table(f"{ICEBERG_CATALOG}.{ICEBERG_NAMESPACE}.{name}"), keys[name]))
         for name in TABLES
     }
+
+
+def with_source(frame: DataFrame) -> DataFrame:
+    """Rows written before the source column existed come from OpenCode."""
+    source = F.col("source") if "source" in frame.columns else F.lit(None).cast("string")
+    return frame.withColumn("source", F.coalesce(source, F.lit("opencode")))
 
 
 def deduplicate(frame: DataFrame, key: str) -> DataFrame:
@@ -88,7 +94,7 @@ def build_metrics(tables: dict[str, DataFrame]) -> dict[str, DataFrame]:
 
     daily_activity = (
         messages.withColumn("activity_date", F.to_date("created_at"))
-        .groupBy("activity_date")
+        .groupBy("activity_date", "source")
         .agg(
             F.count("message_id").alias("message_count"),
             F.countDistinct("session_id").alias("session_count"),
@@ -97,7 +103,7 @@ def build_metrics(tables: dict[str, DataFrame]) -> dict[str, DataFrame]:
             F.sum("tokens_reasoning").alias("tokens_reasoning"),
             F.sum("cost").alias("cost"),
         )
-        .orderBy("activity_date")
+        .orderBy("activity_date", "source")
     )
 
     session_summary = (
@@ -118,7 +124,7 @@ def build_metrics(tables: dict[str, DataFrame]) -> dict[str, DataFrame]:
         .fillna(0, subset=["message_count", "message_tokens_input", "message_tokens_output", "tool_call_count"])
         .withColumn("duration_minutes", (F.col("updated_at").cast("long") - F.col("created_at").cast("long")) / 60)
         .select(
-            "session_id", "title", "directory", "agent", "model", "provider", "created_at", "updated_at",
+            "session_id", "source", "title", "directory", "agent", "model", "provider", "created_at", "updated_at",
             "duration_minutes", "message_count", "tool_call_count", "cost",
             "message_tokens_input", "message_tokens_output",
         )
@@ -137,7 +143,7 @@ def build_metrics(tables: dict[str, DataFrame]) -> dict[str, DataFrame]:
 
     model_usage = (
         messages.where(F.col("model") != "")
-        .groupBy("model")
+        .groupBy("source", "model")
         .agg(
             F.count("message_id").alias("message_count"),
             F.countDistinct("session_id").alias("session_count"),
