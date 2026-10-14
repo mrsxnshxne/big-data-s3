@@ -36,7 +36,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        until rpk cluster health -X brokers=redpanda:29092 >/dev/null 2>&1; do sleep 1; done;
+        until rpk cluster info -X brokers=redpanda:29092 >/dev/null 2>&1; do sleep 1; done;
         for name in sessions messages parts tools; do
         rpk topic create ${KAFKA_TOPIC_PREFIX:-opencode}.$$name -X brokers=redpanda:29092 || true;
         done
