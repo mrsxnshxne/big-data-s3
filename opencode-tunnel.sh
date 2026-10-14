@@ -1,11 +1,11 @@
 #!/bin/sh
 # Ouvre les tunnels SSH vers l'engine podman sur homelab pour le client local.
-# Utilisé par app.py (Iceberg REST + S3) et produce.py (Kafka + Schema Registry) via .env.
+# Utilisé par app.py (Iceberg REST + S3) et le plugin OpenCode (Schema Registry + HTTP Proxy) via .env.
 
 set -eu
 
 HOST="${HOMELAB_HOST:-homelab}"
-PORTS="8181 9000 9092 8081"  # iceberg-rest, rustfs (S3), redpanda, schema registry
+PORTS="8181 9000 9092 8081 8082"  # iceberg-rest, rustfs (S3), redpanda, schema registry, HTTP proxy
 
 for port in $PORTS; do
     if nc -z 127.0.0.1 "$port" 2>/dev/null; then

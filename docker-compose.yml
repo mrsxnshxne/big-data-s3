@@ -16,12 +16,31 @@ services:
       - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
       - --advertise-kafka-addr=internal://redpanda:29092,external://127.0.0.1:${KAFKA_PORT:-9092}
       - --schema-registry-addr=0.0.0.0:8081
+      # HTTP Proxy: the OpenCode plugin produces through it with plain fetch().
+      - --pandaproxy-addr=0.0.0.0:8082
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
       - "127.0.0.1:${SCHEMA_REGISTRY_PORT:-8081}:8081"
+      - "127.0.0.1:${KAFKA_HTTP_PROXY_PORT:-8082}:8082"
     volumes:
       - redpanda-data:/data
     restart: unless-stopped
+
+  # Creates the topics explicitly instead of relying on auto-creation, which is
+  # not guaranteed for writes through the HTTP Proxy. Safe to rerun.
+  redpanda-topics:
+    container_name: big-data-s3-redpanda-topics
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    depends_on:
+      - redpanda
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until rpk cluster health -X brokers=redpanda:29092 >/dev/null 2>&1; do sleep 1; done;
+        for name in sessions messages parts tools; do
+        rpk topic create ${KAFKA_TOPIC_PREFIX:-opencode}.$$name -X brokers=redpanda:29092 || true;
+        done
+    restart: "no"
 
   rustfs:
     container_name: big-data-s3-rustfs
