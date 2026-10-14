@@ -142,7 +142,7 @@ pour `node:sqlite`, sans conséquence.
 | Aucune ligne `ready for` | Lien absent ou cassé (`ls -l ~/.config/opencode/plugins/`), ou OpenCode pas redémarré |
 | `http://localhost:8082 unreachable` | Stack arrêtée, port 8082 non exposé, ou tunnel fermé |
 | `HTTP 409` sur `/subjects/…` | Le schéma modifié n'est pas compatible avec la version enregistrée |
-| `record(s) rejected` | Topic absent (relancer `docker-compose up -d redpanda-topics`) ou message trop gros (> 1 Mo) |
+| `batch of … rejected` | Topic absent (relancer `docker-compose up -d redpanda-topics`) ou message trop gros (> 1 Mo) |
 | `expected string, got …` | Une donnée OpenCode ne respecte plus le schéma Avro : format de la base changé |
 
 ## Limites

@@ -23,7 +23,7 @@ from botocore.exceptions import ClientError
 from confluent_kafka import Consumer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
-from confluent_kafka.serialization import MessageField, SerializationContext
+from confluent_kafka.serialization import MessageField, SerializationContext, SerializationError
 from pyiceberg.catalog import load_catalog
 from pyiceberg.io.pyarrow import pyarrow_to_schema
 from pyiceberg.table.name_mapping import MappedField, NameMapping
@@ -205,7 +205,13 @@ def run(once: bool) -> None:
                 continue
             last_message = now
             context = SerializationContext(message.topic(), MessageField.VALUE)
-            buffers.setdefault(dataset_for(message.topic()), []).append(deserialize(message.value(), context))
+            try:
+                value = deserialize(message.value(), context)
+            except SerializationError as error:
+                # A single undecodable message must not block the pipeline: drop it.
+                print(f"skipping undecodable message {message.topic()}[{message.partition()}]@{message.offset()}: {error}", flush=True)
+                continue
+            buffers.setdefault(dataset_for(message.topic()), []).append(value)
         pending = sum(len(rows) for rows in buffers.values())
         if pending and (pending >= max_records or now - last_flush >= flush_interval):
             for name, rows in buffers.items():

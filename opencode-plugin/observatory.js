@@ -236,12 +236,12 @@ function encodeRecord(schemaId, schema, record) {
 
 // ---------------------------------------------------------------- Redpanda
 
-async function request(url, body, contentType) {
+async function request(url, body, contentType, accept) {
   let response;
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": contentType, Accept: "application/json" },
+      headers: { "Content-Type": contentType, Accept: accept },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30_000),
     });
@@ -260,6 +260,7 @@ async function registerSchema(config, topic, schema) {
     `${config.registryUrl}/subjects/${encodeURIComponent(`${topic}-value`)}/versions`,
     { schema },
     "application/vnd.schemaregistry.v1+json",
+    "application/vnd.schemaregistry.v1+json",
   );
   return id;
 }
@@ -269,10 +270,12 @@ async function sendBatch(config, topic, records) {
     `${config.proxyUrl}/topics/${encodeURIComponent(topic)}`,
     { records },
     "application/vnd.kafka.binary.v2+json",
+    "application/vnd.kafka.v2+json", // the proxy answers 406 to anything else
   );
+  // Redpanda answers one offset per written batch, not per record.
   const failed = offsets.filter((offset) => offset.error_code);
-  if (failed.length || offsets.length !== records.length) {
-    throw new Error(`${topic}: ${failed.length || records.length - offsets.length} record(s) rejected ${JSON.stringify(failed[0] ?? {})}`);
+  if (failed.length || !offsets.length) {
+    throw new Error(`${topic}: batch of ${records.length} record(s) rejected ${JSON.stringify(failed[0] ?? offsets)}`);
   }
 }
 
