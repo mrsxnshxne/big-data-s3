@@ -15,8 +15,10 @@ services:
       - --node-id=0
       - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
       - --advertise-kafka-addr=internal://redpanda:29092,external://127.0.0.1:${KAFKA_PORT:-9092}
+      - --schema-registry-addr=0.0.0.0:8081
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
+      - "127.0.0.1:${SCHEMA_REGISTRY_PORT:-8081}:8081"
     volumes:
       - redpanda-data:/data
     restart: unless-stopped
@@ -79,6 +81,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      SCHEMA_REGISTRY_URL: http://redpanda:8081
       KAFKA_TOPIC_PREFIX: ${KAFKA_TOPIC_PREFIX:-opencode}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}

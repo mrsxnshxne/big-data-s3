@@ -1,7 +1,8 @@
 """Stream Redpanda events into Iceberg tables.
 
 This consumer subscribes to the OpenCode topics produced by ``produce.py``,
-batches the JSON events and appends them to the ``analytics`` tables of the
+decodes the Avro events with the schema fetched from the Redpanda Schema
+Registry, batches them and appends them to the ``analytics`` tables of the
 configured Iceberg catalog. The physical data lands in S3/RustFS because the
 Iceberg warehouse points there. Offsets are committed only after a successful
 append, so the pipeline is at-least-once; readers deduplicate by id.
@@ -9,7 +10,6 @@ append, so the pipeline is at-least-once; readers deduplicate by id.
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import time
@@ -19,7 +19,10 @@ import boto3
 import pandas as pd
 import pyarrow as pa
 from botocore.exceptions import ClientError
-from kafka import KafkaConsumer
+from confluent_kafka import Consumer
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroDeserializer
+from confluent_kafka.serialization import MessageField, SerializationContext
 from pyiceberg.catalog import load_catalog
 from pyiceberg.io.pyarrow import pyarrow_to_schema
 from pyiceberg.table.name_mapping import MappedField, NameMapping
@@ -136,16 +139,22 @@ def load_iceberg_catalog():
     )
 
 
-def make_consumer() -> KafkaConsumer:
+def make_consumer() -> Consumer:
     prefix = os.getenv("KAFKA_TOPIC_PREFIX", "opencode")
-    return KafkaConsumer(
-        *[f"{prefix}.{name}" for name in ARROW_SCHEMAS],
-        bootstrap_servers=[server.strip() for server in os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092").split(",")],
-        group_id=os.getenv("KAFKA_CONSUMER_GROUP", "opencode-iceberg-sink"),
-        auto_offset_reset=os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest"),
-        enable_auto_commit=False,
-        value_deserializer=lambda raw: json.loads(raw.decode("utf-8")),
-    )
+    consumer = Consumer({
+        "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "group.id": os.getenv("KAFKA_CONSUMER_GROUP", "opencode-iceberg-sink"),
+        "auto.offset.reset": os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest"),
+        "enable.auto.commit": False,
+    })
+    consumer.subscribe([f"{prefix}.{name}" for name in ARROW_SCHEMAS])
+    return consumer
+
+
+def make_deserializer() -> AvroDeserializer:
+    """Decode events with the writer schema referenced by their registry id."""
+    registry = SchemaRegistryClient({"url": os.getenv("SCHEMA_REGISTRY_URL", "http://localhost:8081")})
+    return AvroDeserializer(registry)
 
 
 class IcebergSink:
@@ -167,6 +176,7 @@ def dataset_for(topic: str) -> str:
 
 def run(once: bool) -> None:
     consumer = make_consumer()
+    deserialize = make_deserializer()
     sink = IcebergSink()
     max_records = int(os.getenv("SINK_MAX_RECORDS", "2000"))
     flush_interval = float(os.getenv("SINK_FLUSH_INTERVAL_SECONDS", "5"))
@@ -183,25 +193,31 @@ def run(once: bool) -> None:
     last_flush = time.monotonic()
     last_message = time.monotonic()
     while not stop["requested"]:
-        batch = consumer.poll(timeout_ms=1000)
+        batch = consumer.consume(num_messages=500, timeout=1.0)
         now = time.monotonic()
-        if batch:
+        for message in batch:
+            if message.error():
+                # e.g. topics not created yet before the first produce: wait for them.
+                if message.error().fatal():
+                    raise RuntimeError(message.error())
+                print(f"consumer warning: {message.error()}", flush=True)
+                continue
             last_message = now
-            for record in batch.values():
-                for message in record:
-                    buffers.setdefault(dataset_for(message.topic), []).append(message.value)
+            context = SerializationContext(message.topic(), MessageField.VALUE)
+            buffers.setdefault(dataset_for(message.topic()), []).append(deserialize(message.value(), context))
         pending = sum(len(rows) for rows in buffers.values())
         if pending and (pending >= max_records or now - last_flush >= flush_interval):
             for name, rows in buffers.items():
                 sink.append(name, rows)
-            consumer.commit()
+            consumer.commit(asynchronous=False)
             buffers.clear()
             last_flush = time.monotonic()
         if once and not batch and time.monotonic() - last_message >= idle_timeout:
             break
     for name, rows in buffers.items():
         sink.append(name, rows)
-    consumer.commit()
+    if buffers:
+        consumer.commit(asynchronous=False)
     consumer.close()
 
 

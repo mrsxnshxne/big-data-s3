@@ -22,9 +22,11 @@ partiellement vide ne bloque pas toute l'extraction.
 | `parts` | Parties textuelles, raisonnement ou outil d'un message |
 | `tools` | Nom de l'outil, appel, statut, entrée, sortie et horodatages |
 
-Chaque ligne est publiée sous forme d'événement JSON JSON-lines, clé de
-compaction = identifiant de la ligne. Les timestamps SQLite en millisecondes
-deviennent des horodatages ISO 8601 UTC ; le champ `updated_at` de chaque table
+Chaque ligne est publiée sous forme d'événement **Avro**, clé de message =
+identifiant de la ligne. Le schéma de chaque topic est défini dans
+`schemas/<dataset>.avsc` ; c'est aussi lui qui fixe la liste et l'ordre des
+colonnes du producteur. Les timestamps SQLite en millisecondes deviennent des
+`timestamp-micros` UTC ; le champ `updated_at` de chaque table
 sert à la déduplication à la lecture. Les valeurs structurées d'outil sont
 conservées en texte JSON dans `input` et `output`.
 

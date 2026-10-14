@@ -4,8 +4,8 @@
 
 Redpanda est un broker de messages compatible Kafka, sans JVM. Il sert de
 zone de tampon entre le producteur local (`produce.py`) et le sink streaming
-(`sink.py`). Le uploader ne publie plus de fichiers vers S3 : il émet des
-événements JSON, et c'est le sink qui écrit dans Iceberg, donc dans S3.
+(`sink.py`). Le producteur ne publie pas de fichiers vers S3 : il émet des
+événements Avro, et c'est le sink qui écrit dans Iceberg, donc dans S3.
 
 ```text
 opencode.db --> produce.py --> topics Redpanda --> sink.py --> Iceberg --> RustFS/S3
@@ -23,6 +23,40 @@ Quatre topics, préfixés par `KAFKA_TOPIC_PREFIX` (`opencode` par défaut) :
 | `opencode.tools` | `part_id` | Appels d'outils (dérivés des parties `tool`) |
 
 Les topics sont auto-créés par Redpanda (`auto_create_topics_enabled`).
+
+## Schema Registry et Avro
+
+Redpanda embarque un Schema Registry compatible Confluent, exposé sur
+`localhost:8081` (`SCHEMA_REGISTRY_URL`). Chaque topic a un schéma Avro
+versionné dans `schemas/` :
+
+```text
+produce.py --(1) enregistre schemas/sessions.avsc sous le sujet opencode.sessions-value
+           --(2) envoie [0x00][id du schéma sur 4 octets][payload Avro binaire]
+sink.py    --(3) lit l'id dans l'en-tête, récupère le schéma auprès du registry, décode
+```
+
+Ce que cela apporte par rapport au JSON libre :
+
+- **Contrat explicite** : un événement mal typé (coût en texte, champ
+  obligatoire manquant) est refusé dès la sérialisation, avant d'atteindre le
+  broker.
+- **Évolution contrôlée** : le registry vérifie la compatibilité (par défaut
+  `BACKWARD`) quand un schéma change. Ajouter un champ avec `"default": null`
+  passe ; renommer ou retyper un champ est rejeté.
+- **Compacité** : les noms de champs ne voyagent plus dans chaque message
+  (2 à 2,5 fois moins d'octets pour `sessions` et `messages`).
+
+Pour inspecter le registry :
+
+```sh
+curl -s localhost:8081/subjects
+curl -s localhost:8081/subjects/opencode.sessions-value/versions/latest
+docker exec big-data-s3-redpanda rpk registry schema list
+```
+
+`rpk topic consume` affiche des octets Avro bruts ; ajouter
+`--use-schema-registry=value` pour les décoder.
 
 ## Sémantique incrémentale
 
@@ -62,5 +96,5 @@ utilisent `redpanda:29092`. Pour inspecter les topics :
 
 ```sh
 docker exec big-data-s3-redpanda rpk topic list
-docker exec big-data-s3-redpanda rpk topic consume opencode.sessions --num 3
+docker exec big-data-s3-redpanda rpk topic consume opencode.sessions --num 3 --use-schema-registry=value
 ```

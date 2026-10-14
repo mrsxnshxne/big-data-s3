@@ -9,10 +9,11 @@
   produce.py (producteur, watermark incrémental)
         |
         v
-  Redpanda : topics opencode.sessions/messages/parts/tools
+  Redpanda : topics opencode.sessions/messages/parts/tools (Avro)
+        |     Schema Registry : un schéma par topic (schemas/*.avsc)
         |
         v
-  sink.py (consommateur, batch, append Iceberg)
+  sink.py (consommateur, décodage Avro, batch, append Iceberg)
         |
         v
   Iceberg REST + warehouse sur RustFS/S3
@@ -28,6 +29,8 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
 
 - Redpanda découple l'extraction locale de l'écriture des tables : le
   producteur ne fait que publier des événements, le sink avance à son rythme.
+- Le Schema Registry matérialise le contrat entre producteur et sink : un
+  événement qui ne respecte pas le schéma Avro est refusé à la production.
 - Iceberg est la seule source de vérité lue par le dashboard : le stockage S3
   est atteint *via* le catalogue, ce qui garantit des snapshots cohérents.
 - Comme le sink fait de l'append en au-moins-une-fois, chaque lecteur garde la
@@ -38,7 +41,8 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
 `docker-compose.yml` définit six services :
 
 - `redpanda` expose le protocole Kafka sur `localhost:9092` (hôte) et
-  `redpanda:29092` (réseau Compose).
+  `redpanda:29092` (réseau Compose), ainsi que son Schema Registry sur
+  `localhost:8081` / `redpanda:8081`.
 - `rustfs` expose l'API S3 sur `localhost:9000` et sa console sur
   `localhost:9001`.
 - `iceberg-rest` expose le catalogue Iceberg sur `localhost:8181` et utilise
@@ -49,8 +53,9 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
   `localhost:8501`.
 - `spark` est activé par le profil `spark` et exécute `spark/analytics.py`.
 
-Les volumes Docker persistent les objets RustFS (`rustfs-data`) et les logs
-Redpanda (`redpanda-data`). Les ports sont liés à `127.0.0.1` par défaut afin
+Les volumes Docker persistent les objets RustFS (`rustfs-data`), les logs
+Redpanda et le Schema Registry (`redpanda-data`) et le catalogue Iceberg
+(`iceberg-catalog`). Les ports sont liés à `127.0.0.1` par défaut afin
 de ne pas publier les services sur le réseau local.
 
 ## Modes de lecture du dashboard

@@ -41,7 +41,8 @@ Le flux est continu :
 | --- | --- |
 | Python, SQLite, pandas | Extraction et normalisation de la base OpenCode |
 | Redpanda | Broker de streaming compatible Kafka |
-| kafka-python-ng | Producteur et consommateur côté Python |
+| confluent-kafka | Producteur et consommateur côté Python, sérialisation Avro |
+| Redpanda Schema Registry | Contrat Avro de chaque topic (`schemas/*.avsc`) |
 | RustFS | Stockage objet S3-compatible local (warehouse Iceberg) |
 | PyIceberg | Écriture des événements dans les tables Iceberg |
 | Apache Iceberg REST | Catalogue et tables analytiques |

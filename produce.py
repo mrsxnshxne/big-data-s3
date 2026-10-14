@@ -2,8 +2,9 @@
 
 The producer reads the local OpenCode database in read-only mode, keeps a
 watermark per dataset (last ``time_updated`` in epoch milliseconds) and sends
-every new or modified row as a JSON event to a Redpanda (Kafka-compatible)
-topic. A separate streaming sink (``sink.py``) appends those events to the
+every new or modified row as an Avro event to a Redpanda (Kafka-compatible)
+topic. The Avro schemas live in ``schemas/`` and are registered in the Redpanda
+Schema Registry, which rejects any event that does not match its contract. A separate streaming sink (``sink.py``) appends those events to the
 Iceberg tables consumed by the dashboard.
 """
 
@@ -21,11 +22,12 @@ import pandas as pd
 
 DATASETS = ("sessions", "messages", "parts", "tools")
 
+SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
+
+# The Avro schemas are the data contract: column order comes from them.
+SCHEMAS: dict[str, str] = {name: (SCHEMA_DIR / f"{name}.avsc").read_text() for name in DATASETS}
 COLUMNS: dict[str, list[str]] = {
-    "sessions": ["session_id", "title", "directory", "agent", "model", "provider", "cost", "tokens_input", "tokens_output", "tokens_reasoning", "tokens_cache_read", "tokens_cache_write", "created_at", "updated_at"],
-    "messages": ["message_id", "session_id", "role", "agent", "model", "finish", "cost", "tokens_input", "tokens_output", "tokens_reasoning", "created_at", "updated_at"],
-    "parts": ["part_id", "message_id", "session_id", "type", "text", "created_at", "updated_at"],
-    "tools": ["part_id", "message_id", "session_id", "tool", "call_id", "status", "input", "output", "started_at", "created_at", "updated_at"],
+    name: [field["name"] for field in json.loads(schema)["fields"]] for name, schema in SCHEMAS.items()
 }
 
 KEYS = {"sessions": "session_id", "messages": "message_id", "parts": "part_id", "tools": "part_id"}
@@ -156,18 +158,20 @@ def extract(database: Path, watermarks: dict[str, int]) -> dict[str, pd.DataFram
     return frames
 
 
-def json_safe(value: Any) -> Any:
+def avro_safe(value: Any) -> Any:
     if isinstance(value, pd.Timestamp):
-        return None if pd.isna(value) else value.isoformat()
+        return None if pd.isna(value) else value.to_pydatetime()
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
+    if hasattr(value, "item"):  # numpy scalar -> plain Python value
+        return value.item()
     return value
 
 
 def to_events(frame: pd.DataFrame, dataset: str) -> list[tuple[str, dict[str, Any]]]:
     events = []
     for row in frame.to_dict(orient="records"):
-        record = {column: json_safe(row.get(column)) for column in COLUMNS[dataset]}
+        record = {column: avro_safe(row.get(column)) for column in COLUMNS[dataset]}
         events.append((str(row[KEYS[dataset]]), record))
     return events
 
@@ -177,28 +181,44 @@ def topic(name: str) -> str:
 
 
 def produce(datasets: dict[str, pd.DataFrame]) -> dict[str, int]:
-    from kafka import KafkaProducer
+    from confluent_kafka import Producer
+    from confluent_kafka.schema_registry import SchemaRegistryClient
+    from confluent_kafka.schema_registry.avro import AvroSerializer
+    from confluent_kafka.serialization import MessageField, SerializationContext
 
-    servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    producer = KafkaProducer(
-        bootstrap_servers=[server.strip() for server in servers.split(",")],
-        acks="all",
-        linger_ms=int(os.getenv("KAFKA_LINGER_MS", "50")),
-        value_serializer=lambda value: json.dumps(value, ensure_ascii=False).encode("utf-8"),
-        key_serializer=lambda key: key.encode("utf-8"),
-    )
+    registry = SchemaRegistryClient({"url": os.getenv("SCHEMA_REGISTRY_URL", "http://localhost:8081")})
+    producer = Producer({
+        "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "acks": "all",
+        "enable.idempotence": True,
+        "linger.ms": int(os.getenv("KAFKA_LINGER_MS", "50")),
+    })
+    errors = []
+
+    def on_delivery(error, message) -> None:
+        if error is not None:
+            errors.append(error)
+
     counts = {}
-    try:
-        for name, frame in datasets.items():
-            sent = 0
-            for key, record in to_events(frame, name):
-                producer.send(topic(name), key=key, value=record)
-                sent += 1
-            counts[name] = sent
-        # Raises on any failed delivery; the caller only saves the watermark after this returns.
-        producer.flush(timeout=120)
-    finally:
-        producer.close(timeout=30)
+    for name, frame in datasets.items():
+        # Registers the schema under "<topic>-value" on first use (TopicNameStrategy).
+        serialize = AvroSerializer(registry, SCHEMAS[name])
+        context = SerializationContext(topic(name), MessageField.VALUE)
+        sent = 0
+        for key, record in to_events(frame, name):
+            value = serialize(record, context)
+            while True:
+                try:
+                    producer.produce(topic(name), key=key.encode("utf-8"), value=value, on_delivery=on_delivery)
+                    break
+                except BufferError:
+                    producer.poll(1)  # local queue full: let deliveries drain
+            producer.poll(0)
+            sent += 1
+        counts[name] = sent
+    # The caller only saves the watermark after every event is acknowledged.
+    if producer.flush(120) or errors:
+        raise RuntimeError(f"{len(errors)} event(s) failed, {len(producer)} still queued: {errors[:3]}")
     return counts
 
 

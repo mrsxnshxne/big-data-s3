@@ -1,5 +1,5 @@
 duckdb>=1.1,<2
-kafka-python-ng>=2.2,<3
+confluent-kafka[avro,schemaregistry]>=2.6,<3
 pandas>=2.0,<3
 pyarrow>=14,<19
 streamlit>=1.38,<2

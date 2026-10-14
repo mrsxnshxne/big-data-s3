@@ -26,6 +26,7 @@ streamlit run app.py --server.address=127.0.0.1
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | Base source |
 | `PRODUCER_STATE_FILE` | `data/state/producer-state.json` | Watermarks du producteur |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Broker Redpanda (hôte) |
+| `SCHEMA_REGISTRY_URL` | `http://localhost:8081` | Schema Registry Redpanda (hôte) |
 | `KAFKA_TOPIC_PREFIX` | `opencode` | Préfixe des topics |
 | `KAFKA_CONSUMER_GROUP` | `opencode-iceberg-sink` | Groupe offsets du sink |
 | `SINK_MAX_RECORDS` | `2000` | Taille de lot Iceberg |
@@ -46,6 +47,13 @@ docker-compose up -d rustfs iceberg-rest redpanda sink
 ```
 
 Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
+
+### Le producteur échoue à la sérialisation
+
+Un message `ValueError` / `SerializationError` signifie qu'un événement ne
+respecte pas `schemas/<dataset>.avsc`, ou que la nouvelle version d'un schéma
+n'est pas compatible avec la précédente dans le registry. Vérifier que
+`SCHEMA_REGISTRY_URL` répond (`curl -s $SCHEMA_REGISTRY_URL/subjects`).
 
 ### Le producteur ne publie rien
 
