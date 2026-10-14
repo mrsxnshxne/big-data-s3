@@ -17,14 +17,16 @@
   sink.py (consommateur, décodage Avro, batch, append Iceberg)
         |
         v
-  Iceberg REST + warehouse sur RustFS/S3
+  Iceberg REST + warehouse sur RustFS/S3 (namespace `analytics`)
         |
-        v
-  DuckDB (déduplication par id) + Streamlit
+        +--> DuckDB (déduplication par id) + Streamlit
+        |
+        +--> Spark (sessions, messages, tools dédupliqués)
+                 --> agrégats daily_activity, session_summary,
+                     tool_usage et model_usage
 ```
 
-Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
-`daily_activity`, `session_summary`, `tool_usage` et `model_usage`.
+Spark ne lit pas la table `parts`. Le dashboard, lui, charge les quatre tables.
 
 ## Pourquoi cette forme
 
@@ -42,7 +44,7 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
 
 ## Services Docker
 
-`docker-compose.yml` définit sept services :
+`docker-compose.yml` définit huit services :
 
 - `redpanda` expose le protocole Kafka sur `localhost:9092` (hôte) et
   `redpanda:29092` (réseau Compose), son Schema Registry sur
@@ -57,6 +59,8 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
 - `dashboard` est activé par le profil Docker `dashboard` et écoute sur
   `localhost:8501`.
 - `spark` est activé par le profil `spark` et exécute `spark/analytics.py`.
+- `aws-cli` est un outil ponctuel, activé par le profil `tools`, pour interagir
+  avec l'API S3 de RustFS.
 
 Les volumes Docker persistent les objets RustFS (`rustfs-data`), les logs
 Redpanda et le Schema Registry (`redpanda-data`) et le catalogue Iceberg
