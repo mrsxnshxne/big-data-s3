@@ -33,7 +33,6 @@ streamlit run app.py --server.address=127.0.0.1
 | `SINK_FLUSH_INTERVAL_SECONDS` | `5` | Latence max d'un lot |
 | `ICEBERG_CATALOG_URI` | `http://localhost:8181` dans `.env.example` | Catalogue REST |
 | `ICEBERG_WAREHOUSE` | `s3://iceberg-warehouse` | Warehouse Iceberg |
-| `OPENCODE_ANALYTICS_INTERVAL` | `30` | Intervalle du producteur |
 
 ## Dépannage
 
@@ -43,7 +42,7 @@ Le pipeline complet doit tourner :
 
 ```sh
 docker-compose up -d rustfs iceberg-rest redpanda sink
-./opencode-analytics.sh sync
+./opencode-analytics.sh
 ```
 
 Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
@@ -86,8 +85,9 @@ service Docker l'ajoutent). En Docker, utiliser les chemins `s3a://` et non
 
 ## Cycle d'arrêt
 
+Commenter la ligne cron (`crontab -e`), puis :
+
 ```sh
-./opencode-analytics.sh disable
 docker-compose --profile dashboard down
 docker-compose --profile spark down
 docker-compose down

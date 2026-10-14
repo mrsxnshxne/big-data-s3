@@ -88,7 +88,7 @@ comptés sans contact avec le broker.
 docker-compose up -d redpanda
 python3 sink.py                 # terminal dédié, ou :
 docker-compose up -d sink       # sink dans Docker
-./opencode-analytics.sh enable  # boucle productrice toutes les 30 s
+./opencode-analytics.sh         # une publication (voir docs/ingestion.md pour cron)
 ```
 
 Le broker hôte est `localhost:9092` ; depuis le réseau Compose, les conteneurs

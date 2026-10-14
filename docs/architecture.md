@@ -6,7 +6,7 @@
 ~/.local/share/opencode/opencode.db
         |
         v
-  produce.py (producteur, watermark incrémental)
+  produce.py (producteur, watermark incrémental, déclenché par cron)
         |
         v
   Redpanda : topics opencode.sessions/messages/parts/tools (Avro)
@@ -68,8 +68,8 @@ Iceberg, le dashboard affiche une erreur qui rappelle les étapes du pipeline.
 
 ## Synchronisation continue
 
-`opencode-analytics.sh enable` démarre une boucle en arrière-plan qui lance
-`produce.py` toutes les `OPENCODE_ANALYTICS_INTERVAL` secondes. Le watermark
+Une entrée cron lance `opencode-analytics.sh` (donc `produce.py`) chaque
+minute. Le watermark
 par dataset est persisté dans `PRODUCER_STATE_FILE` ; l'état d'avancement de
 l'écriture Iceberg est, lui, l'offset Kafka du groupe
 `KAFKA_CONSUMER_GROUP`.

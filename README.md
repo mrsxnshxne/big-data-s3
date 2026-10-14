@@ -52,20 +52,18 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d                 # rustfs, iceberg-rest, redpanda, sink
-set -a; . ./.env; set +a
-./opencode-analytics.sh sync
+docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ schema registry), sink
+./opencode-analytics.sh
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-Pour publier automatiquement toutes les 30 secondes :
+Pour publier automatiquement, ajoutez le script à la crontab (`crontab -e`).
+Il charge lui-même `.env`, puisque cron ne lit pas l'environnement du shell :
 
-```sh
-./opencode-analytics.sh enable
-./opencode-analytics.sh status
-./opencode-analytics.sh disable
+```cron
+* * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
 ```
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :

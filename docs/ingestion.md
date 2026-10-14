@@ -52,13 +52,16 @@ python3 produce.py --dry-run
 python3 produce.py --full
 ```
 
-## Scripts de synchronisation
+## Synchronisation périodique (cron)
 
-- `./opencode-analytics.sh sync` exécute une publication.
-- `./opencode-analytics.sh enable` lance la boucle périodique du producteur.
-- `./opencode-analytics.sh status` affiche son état.
-- `./opencode-analytics.sh disable` l'arrête.
-- `./opencode-s3-logs.sh upload` est un alias historique de `sync`.
+`./opencode-analytics.sh` exécute une publication : il charge `.env`, choisit
+le Python du venv et transmet ses arguments à `produce.py`
+(`./opencode-analytics.sh --dry-run` fonctionne). Pour publier automatiquement, ajoutez le script à la crontab (`crontab -e`).
+Il charge lui-même `.env`, puisque cron ne lit pas l'environnement du shell :
+
+```cron
+* * * * * /chemin/vers/big-data-s3/opencode-analytics.sh >> /chemin/vers/big-data-s3/opencode-analytics.log 2>&1
+```
 
 Le sink, lui, tourne en continu : `python3 sink.py` ou
 `docker-compose up -d sink`.
