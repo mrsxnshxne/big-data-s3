@@ -1,0 +1,22 @@
+{
+  "type": "record",
+  "name": "Session",
+  "namespace": "opencode.observatory",
+  "doc": "Session OpenCode (table session_v2).",
+  "fields": [
+    {"name": "session_id", "type": "string"},
+    {"name": "title", "type": ["null", "string"], "default": null},
+    {"name": "directory", "type": ["null", "string"], "default": null},
+    {"name": "agent", "type": ["null", "string"], "default": null},
+    {"name": "model", "type": ["null", "string"], "default": null},
+    {"name": "provider", "type": ["null", "string"], "default": null},
+    {"name": "cost", "type": ["null", "double"], "default": null},
+    {"name": "tokens_input", "type": ["null", "long"], "default": null},
+    {"name": "tokens_output", "type": ["null", "long"], "default": null},
+    {"name": "tokens_reasoning", "type": ["null", "long"], "default": null},
+    {"name": "tokens_cache_read", "type": ["null", "long"], "default": null},
+    {"name": "tokens_cache_write", "type": ["null", "long"], "default": null},
+    {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+  ]
+}

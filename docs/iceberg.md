@@ -14,13 +14,16 @@ tables.
 ## Configuration du projet
 
 - Catalogue : REST `http://localhost:8181` (`ICEBERG_CATALOG_TYPE=sql` accepté
-  pour les tests hors Docker)
+  pour les tests hors Docker). Le catalogue JDBC du conteneur est un fichier
+  SQLite stocké dans le volume `iceberg-catalog` : sans lui, l'image
+  `tabulario/iceberg-rest` garde le catalogue en mémoire et toutes les tables
+  disparaissent au redémarrage (les fichiers restent dans S3, orphelins).
 - Namespace : `analytics`
 - Warehouse : `s3://iceberg-warehouse`
 - Tables : `analytics.sessions`, `analytics.messages`,
   `analytics.parts`, `analytics.tools`
 
-Ce n'est plus `produce.py` qui écrit dans Iceberg : le sink streaming charge le
+Le producteur (le plugin OpenCode) n'écrit pas dans Iceberg : le sink streaming charge le
 catalogue, crée le namespace et les tables manquantes (schéma dérivé d'un
 schéma PyArrow explicite dans `sink.py`), puis **append** les lots
 d'événements consommés depuis Redpanda.

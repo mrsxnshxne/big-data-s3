@@ -5,10 +5,8 @@
 `spark/analytics.py` lit les datasets `sessions`, `messages` et `tools` depuis
 le catalogue Iceberg alimenté par le sink streaming. Il déduplique chaque table
 par identifiant (dernier `updated_at`), construit quatre DataFrames agrégés
-puis les écrit en Parquet avec le mode `overwrite`.
-
-Si aucune variable `ICEBERG_CATALOG_URI` n'est définie, le job retombe sur une
-lecture Parquet locale via `SPARK_INPUT` (mode développement).
+puis les écrit en Parquet avec le mode `overwrite`. `ICEBERG_CATALOG_URI` est
+obligatoire.
 
 ## Jeux analytiques
 

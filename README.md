@@ -1,14 +1,14 @@
 # OpenCode Observatory
 
 Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
-SQLite locale d'OpenCode, publie les changements sous forme d'événements dans
+SQLite locale d'OpenCode depuis un plugin OpenCode, publie les changements sous forme d'événements dans
 un broker Redpanda, les écrit en continu dans des tables Apache Iceberg
 (stockées sur un objet S3 compatible) et les interroge avec DuckDB dans un
 dashboard Streamlit.
 
 ```text
 opencode.db
-    -> produce.py (watermark incrémental)
+    -> plugin OpenCode (fin de chaque réponse, watermark incrémental, Avro)
     -> Redpanda (topics opencode.sessions/messages/parts/tools)
     -> sink.py (append par lots)
     -> Apache Iceberg REST
@@ -52,21 +52,23 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d                 # rustfs, iceberg-rest, redpanda, sink
-set -a; . ./.env; set +a
-./opencode-analytics.sh sync
+docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
+node opencode-plugin/observatory.js  # première publication de l'historique
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-Pour publier automatiquement toutes les 30 secondes :
+Pour publier automatiquement à la fin de chaque réponse, installez le plugin
+OpenCode, puis redémarrez OpenCode :
 
 ```sh
-./opencode-analytics.sh enable
-./opencode-analytics.sh status
-./opencode-analytics.sh disable
+ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
 ```
+
+Le plugin publie aussi au démarrage d'OpenCode ce qui n'a pas pu partir.
+Désinstallation, configuration et fonctionnement détaillé :
+[opencode-plugin/README.md](opencode-plugin/README.md).
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :
 
@@ -88,7 +90,10 @@ Le dashboard peut aussi tourner dans Docker et lire Iceberg via le catalogue :
 docker-compose --profile dashboard up --build dashboard
 ```
 
-Le service est exposé sur `127.0.0.1:8501`. Pour un serveur distant, utilisez un tunnel SSH :
+Le service est exposé sur `127.0.0.1:8501`. Pour l'ouvrir au réseau local (par exemple
+`http://homelab:8501`), mettez `DASHBOARD_BIND=0.0.0.0` dans `.env` : il affiche
+les prompts et sorties d'outils, à réserver à un réseau de confiance. Sinon,
+utilisez un tunnel SSH :
 
 ```sh
 ssh -N -L 8501:127.0.0.1:8501 utilisateur@serveur
@@ -117,5 +122,4 @@ docker-compose --profile spark run --rm spark
 
 Le job lit le catalogue Iceberg (`ICEBERG_CATALOG_URI`) et déduplique chaque
 table par identifiant. Sortie par défaut dans le warehouse :
-`SPARK_OUTPUT=s3a://iceberg-warehouse/spark`. Sans `ICEBERG_CATALOG_URI`, il
-retombe sur la lecture Parquet locale via `SPARK_INPUT`.
+`SPARK_OUTPUT=s3a://iceberg-warehouse/spark`.

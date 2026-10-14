@@ -15,11 +15,32 @@ services:
       - --node-id=0
       - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
       - --advertise-kafka-addr=internal://redpanda:29092,external://127.0.0.1:${KAFKA_PORT:-9092}
+      - --schema-registry-addr=0.0.0.0:8081
+      # HTTP Proxy: the OpenCode plugin produces through it with plain fetch().
+      - --pandaproxy-addr=0.0.0.0:8082
     ports:
       - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
+      - "127.0.0.1:${SCHEMA_REGISTRY_PORT:-8081}:8081"
+      - "127.0.0.1:${KAFKA_HTTP_PROXY_PORT:-8082}:8082"
     volumes:
       - redpanda-data:/data
     restart: unless-stopped
+
+  # Creates the topics explicitly instead of relying on auto-creation, which is
+  # not guaranteed for writes through the HTTP Proxy. Safe to rerun.
+  redpanda-topics:
+    container_name: big-data-s3-redpanda-topics
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    depends_on:
+      - redpanda
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until rpk cluster info -X brokers=redpanda:29092 >/dev/null 2>&1; do sleep 1; done;
+        for name in sessions messages parts tools; do
+        rpk topic create ${KAFKA_TOPIC_PREFIX:-opencode}.$$name -X brokers=redpanda:29092 || true;
+        done
+    restart: "no"
 
   rustfs:
     container_name: big-data-s3-rustfs
@@ -44,6 +65,8 @@ services:
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-rustfsadmin}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-rustfsadmin}
       AWS_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      # The image defaults to an in-memory SQLite catalog: persist it in the volume instead.
+      CATALOG_URI: jdbc:sqlite:file:/home/iceberg/catalog.db
       CATALOG_WAREHOUSE: s3://${ICEBERG_BUCKET:-iceberg-warehouse}
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://rustfs:9000
@@ -51,6 +74,9 @@ services:
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
     ports:
       - "127.0.0.1:${ICEBERG_PORT:-8181}:8181"
+    volumes:
+      # /home/iceberg is owned by the image's iceberg user, so the volume inherits write access.
+      - iceberg-catalog:/home/iceberg
     restart: unless-stopped
 
   aws-cli:
@@ -74,6 +100,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      SCHEMA_REGISTRY_URL: http://redpanda:8081
       KAFKA_TOPIC_PREFIX: ${KAFKA_TOPIC_PREFIX:-opencode}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
@@ -92,7 +119,8 @@ services:
       - rustfs
       - iceberg-rest
     ports:
-      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
+      # Set DASHBOARD_BIND=0.0.0.0 to reach it from the LAN (it shows prompts and tool outputs).
+      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8501}:8501"
     environment:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
@@ -132,3 +160,4 @@ services:
 volumes:
   rustfs-data:
   redpanda-data:
+  iceberg-catalog:

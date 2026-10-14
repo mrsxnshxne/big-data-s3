@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "Message",
+  "namespace": "opencode.observatory",
+  "doc": "Message utilisateur ou assistant (table session_message).",
+  "fields": [
+    {"name": "message_id", "type": "string"},
+    {"name": "session_id", "type": ["null", "string"], "default": null},
+    {"name": "role", "type": ["null", "string"], "default": null},
+    {"name": "agent", "type": ["null", "string"], "default": null},
+    {"name": "model", "type": ["null", "string"], "default": null},
+    {"name": "finish", "type": ["null", "string"], "default": null},
+    {"name": "cost", "type": ["null", "double"], "default": null},
+    {"name": "tokens_input", "type": ["null", "long"], "default": null},
+    {"name": "tokens_output", "type": ["null", "long"], "default": null},
+    {"name": "tokens_reasoning", "type": ["null", "long"], "default": null},
+    {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "Part",
+  "namespace": "opencode.observatory",
+  "doc": "Partie d'un message : texte, raisonnement ou outil.",
+  "fields": [
+    {"name": "part_id", "type": "string"},
+    {"name": "message_id", "type": ["null", "string"], "default": null},
+    {"name": "session_id", "type": ["null", "string"], "default": null},
+    {"name": "type", "type": ["null", "string"], "default": null},
+    {"name": "text", "type": ["null", "string"], "default": null},
+    {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+  ]
+}

@@ -1,8 +1,6 @@
 """Build OpenCode activity aggregates with Apache Spark.
 
 Source tables come from the Iceberg catalog maintained by the streaming sink.
-For local development without a catalog, set ``SPARK_INPUT`` to a directory of
-Parquet files instead.
 """
 
 from __future__ import annotations
@@ -63,18 +61,14 @@ def spark_session(master: str | None) -> SparkSession:
     return builder.getOrCreate()
 
 
-def read_tables(spark: SparkSession, input_path: str | None) -> dict[str, DataFrame]:
-    catalog_uri = os.getenv("ICEBERG_CATALOG_URI")
+def read_tables(spark: SparkSession) -> dict[str, DataFrame]:
+    if not os.getenv("ICEBERG_CATALOG_URI"):
+        raise RuntimeError("Set ICEBERG_CATALOG_URI to read the Iceberg tables")
     keys = {"sessions": "session_id", "messages": "message_id", "tools": "part_id"}
-    tables = {}
-    for name in TABLES:
-        if catalog_uri:
-            tables[name] = deduplicate(spark.table(f"{ICEBERG_CATALOG}.{ICEBERG_NAMESPACE}.{name}"), keys[name])
-        else:
-            if not input_path:
-                raise RuntimeError("Set ICEBERG_CATALOG_URI to read Iceberg, or SPARK_INPUT to read Parquet")
-            tables[name] = spark.read.parquet(f"{input_path.rstrip('/')}/{name}.parquet")
-    return tables
+    return {
+        name: deduplicate(spark.table(f"{ICEBERG_CATALOG}.{ICEBERG_NAMESPACE}.{name}"), keys[name])
+        for name in TABLES
+    }
 
 
 def deduplicate(frame: DataFrame, key: str) -> DataFrame:
@@ -173,14 +167,13 @@ def write_metrics(metrics: dict[str, DataFrame], output_path: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", default=os.getenv("SPARK_INPUT"), help="Parquet fallback when no Iceberg catalog is configured")
     parser.add_argument("--output", default=os.getenv("SPARK_OUTPUT", "data/spark"))
     parser.add_argument("--master", default=os.getenv("SPARK_MASTER", "local[*]"))
     args = parser.parse_args()
 
     spark = spark_session(args.master)
     try:
-        metrics = build_metrics(read_tables(spark, args.input))
+        metrics = build_metrics(read_tables(spark))
         write_metrics(metrics, args.output)
         for name, frame in metrics.items():
             print(f"wrote {name}: {frame.count()} rows")

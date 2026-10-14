@@ -44,8 +44,9 @@ Spark     = moteur de transformation batch
 
 ## ETL et ELT
 
-L'extraction SQLite vers événements JSON est une étape **ETL** légère : les
-champs JSON sont décodés et normalisés avant publication. Le passage par
+L'extraction SQLite vers événements Avro, faite par le plugin OpenCode, est
+une étape **ETL** légère : les champs JSON sont décodés et normalisés avant
+publication. Le passage par
 Redpanda et le sink ajoute la dimension **streaming** : la table Iceberg
 enrichie par append continu remplace le batch déposé. Les agrégations Spark
 sont plus proches de l'**ELT** : les données sont déposées puis transformées
