@@ -119,7 +119,8 @@ services:
       - rustfs
       - iceberg-rest
     ports:
-      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
+      # Set DASHBOARD_BIND=0.0.0.0 to reach it from the LAN (it shows prompts and tool outputs).
+      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8501}:8501"
     environment:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}

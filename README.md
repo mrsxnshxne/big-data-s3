@@ -90,7 +90,10 @@ Le dashboard peut aussi tourner dans Docker et lire Iceberg via le catalogue :
 docker-compose --profile dashboard up --build dashboard
 ```
 
-Le service est exposé sur `127.0.0.1:8501`. Pour un serveur distant, utilisez un tunnel SSH :
+Le service est exposé sur `127.0.0.1:8501`. Pour l'ouvrir au réseau local (par exemple
+`http://homelab:8501`), mettez `DASHBOARD_BIND=0.0.0.0` dans `.env` : il affiche
+les prompts et sorties d'outils, à réserver à un réseau de confiance. Sinon,
+utilisez un tunnel SSH :
 
 ```sh
 ssh -N -L 8501:127.0.0.1:8501 utilisateur@serveur
