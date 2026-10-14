@@ -4,6 +4,8 @@ import json
 import os
 
 import duckdb
+import plotly.express as px
+import plotly.graph_objects as go
 import pyarrow as pa
 import streamlit as st
 from pyiceberg.catalog import load_catalog
@@ -32,6 +34,8 @@ STATUS_BADGES = {
     "streaming": "🔄",
     "pending": "⏳",
 }
+PLOTLY_MARGIN = dict(l=40, r=20, t=10, b=30)
+DOW_FR = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]
 # Keys that best summarise what a tool call was about, in order of preference.
 SUMMARY_KEYS = ("path", "file_path", "filePath", "command", "cmd", "pattern", "query", "url", "description", "prompt", "subject", "skill", "id")
 
@@ -82,6 +86,12 @@ def connect(tables: dict[str, pa.Table]) -> duckdb.DuckDBPyConnection:
         connection.register(f"raw_{name}", table)
         connection.execute(dedup_view_sql(name))
     return connection
+
+
+def chart(fig: go.Figure, key: str) -> None:
+    """Render a Plotly figure with a consistent layout."""
+    fig.update_layout(margin=PLOTLY_MARGIN)
+    st.plotly_chart(fig, use_container_width=True, key=key)
 
 
 def fmt_count(value: object) -> str:
@@ -235,26 +245,111 @@ session_id = st.sidebar.selectbox(
 )
 selected = sessions[sessions.session_id == session_id].iloc[0]
 
-meta = []
-if selected.model:
-    meta.append(f"🧩 {selected.model}")
-if selected.agent:
-    meta.append(f"🎭 {selected.agent}")
-if selected.directory:
-    meta.append(f"📁 {selected.directory}")
-if meta:
-    st.caption(" · ".join(meta))
+overview_tab, conversation_tab, stats_tab, raw_tab = st.tabs(
+    ["🌐 Vue d'ensemble", "💬 Conversation", "📊 Statistiques", "🧾 Appels outil (brut)"]
+)
 
-top = st.columns(5)
-top[0].metric("💬 Messages", int(connection.execute("select count(*) from messages where session_id = ?", [session_id]).fetchone()[0]))
-top[1].metric("🔧 Outils", int(connection.execute("select count(*) from tools where session_id = ?", [session_id]).fetchone()[0]))
-top[2].metric("🔤 Tokens sortie", fmt_count(selected.tokens_output))
-top[3].metric("🧠 Raisonnement", fmt_count(selected.tokens_reasoning))
-top[4].metric("💰 Coût", f"${float(selected.cost):.4f}")
+with overview_tab:
+    totals = connection.execute("""
+        select
+            (select count(*) from sessions)                                as sessions,
+            (select count(*) from messages)                                as messages,
+            (select count(*) from tools)                                   as tools,
+            (select coalesce(sum(tokens_output + tokens_reasoning), 0)
+               from messages where role = 'assistant')                     as tokens,
+            (select coalesce(sum(cost), 0) from sessions)                  as cost
+    """).fetchone()
+    top = st.columns(5)
+    top[0].metric("🗂️ Sessions", fmt_count(totals[0]))
+    top[1].metric("💬 Messages", fmt_count(totals[1]))
+    top[2].metric("🔧 Appels outils", fmt_count(totals[2]))
+    top[3].metric("🔤 Tokens (sortie + raisonnement)", fmt_count(totals[3]))
+    top[4].metric("💰 Coût total", f"${float(totals[4]):.4f}")
 
-conversation_tab, stats_tab, raw_tab = st.tabs(["💬 Conversation", "📊 Statistiques", "🧾 Appels outil (brut)"])
+    daily = connection.execute("""
+        select date_trunc('day', created_at)::date as day,
+               count(*)                            as messages,
+               coalesce(sum(cost), 0)              as cost,
+               coalesce(sum(tokens_output + tokens_reasoning), 0) as tokens
+        from messages
+        group by 1 order by 1
+    """).df()
+    if len(daily):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Activité quotidienne")
+            fig = go.Figure()
+            fig.add_bar(x=daily.day, y=daily.messages, name="Messages", opacity=0.45)
+            fig.add_scatter(x=daily.day, y=daily.tokens, name="Tokens", yaxis="y2",
+                            mode="lines+markers", line=dict(color="#f97316"))
+            fig.update_layout(
+                legend=dict(orientation="h", y=1.15),
+                yaxis=dict(title="Messages"),
+                yaxis2=dict(title="Tokens", overlaying="y", side="right", showgrid=False),
+            )
+            chart(fig, "daily_activity")
+        with col2:
+            st.markdown("#### Coût cumulé")
+            fig = px.area(daily, x="day", y="cost", labels={"cost": "Coût ($)", "day": ""})
+            chart(fig, "daily_cost")
+
+        heat = connection.execute("""
+            select extract(dow from created_at)::int as dow,
+                   extract(hour from created_at)::int as hour,
+                   count(*) as n
+            from parts
+            group by 1, 2
+        """).df()
+        if len(heat):
+            st.markdown("#### Carte d'activité (jour × heure)")
+            pivot = heat.pivot_table(index="dow", columns="hour", values="n").reindex(
+                index=range(7), columns=range(24), fill_value=0
+            )
+            fig = go.Figure(go.Heatmap(
+                z=pivot.values,
+                x=[f"{h:02d}h" for h in pivot.columns],
+                y=[DOW_FR[d] for d in pivot.index],
+                colorscale="Blues",
+                hovertemplate="%{y} %{x} → %{z} événements<extra></extra>",
+            ))
+            chart(fig, "activity_heatmap")
+
+    usage = connection.execute("""
+        select coalesce(nullif(model, ''), 'inconnu') as model,
+               count(*) as sessions,
+               coalesce(sum(cost), 0) as cost
+        from sessions group by 1 order by cost desc
+    """).df()
+    if len(usage):
+        col3, col4 = st.columns(2)
+        with col3:
+            st.markdown("#### Sessions par modèle")
+            fig = px.pie(usage, names="model", values="sessions", hole=0.55)
+            fig.update_traces(textinfo="percent+label")
+            chart(fig, "model_sessions")
+        with col4:
+            st.markdown("#### Coût par modèle")
+            fig = px.bar(usage, x="model", y="cost", labels={"cost": "Coût ($)", "model": ""})
+            chart(fig, "model_cost")
 
 with conversation_tab:
+    meta = []
+    if selected.model:
+        meta.append(f"🧩 {selected.model}")
+    if selected.agent:
+        meta.append(f"🎭 {selected.agent}")
+    if selected.directory:
+        meta.append(f"📁 {selected.directory}")
+    if meta:
+        st.caption(" · ".join(meta))
+
+    top = st.columns(5)
+    top[0].metric("💬 Messages", int(connection.execute("select count(*) from messages where session_id = ?", [session_id]).fetchone()[0]))
+    top[1].metric("🔧 Outils", int(connection.execute("select count(*) from tools where session_id = ?", [session_id]).fetchone()[0]))
+    top[2].metric("🔤 Tokens sortie", fmt_count(selected.tokens_output))
+    top[3].metric("🧠 Raisonnement", fmt_count(selected.tokens_reasoning))
+    top[4].metric("💰 Coût", f"${float(selected.cost):.4f}")
+
     st.subheader(selected.title)
     messages = connection.execute("select * from messages where session_id = ? order by created_at", [session_id]).df()
     for _, message in messages.iterrows():
@@ -274,7 +369,10 @@ with stats_tab:
         activity = connection.execute("""
             select type, count(*) as count from parts where session_id = ? group by type order by count desc
         """, [session_id]).df()
-        st.bar_chart(activity.set_index("type"), height=320)
+        if len(activity):
+            fig = px.pie(activity, names="type", values="count", hole=0.55)
+            fig.update_traces(textinfo="value+percent")
+            chart(fig, "session_parts")
     with right:
         st.markdown("#### Outils utilisés")
         tools = connection.execute("""
@@ -282,16 +380,63 @@ with stats_tab:
                    sum(case when status = 'error' then 1 else 0 end) as erreurs
             from tools where session_id = ? group by tool order by count desc
         """, [session_id]).df()
-        tools["outil"] = tools.tool.map(lambda t: f"{TOOL_ICONS.get(t, '🔧')} {t}")
-        st.bar_chart(tools.set_index("outil")[["count", "erreurs"]], height=320)
+        if len(tools):
+            fig = go.Figure()
+            fig.add_bar(y=tools["tool"], x=tools["count"], name="Appels", orientation="h", opacity=0.8)
+            fig.add_bar(y=tools["tool"], x=tools["erreurs"], name="Erreurs", orientation="h",
+                        marker_color="#ef4444")
+            fig.update_layout(barmode="overlay", legend=dict(orientation="h", y=1.15),
+                              yaxis=dict(categoryorder="total ascending"))
+            chart(fig, "session_tools")
 
-    st.markdown("#### Activité dans le temps")
+    st.markdown("#### Tokens et coût cumulés (messages agent)")
+    agent = messages[messages.role == "assistant"].copy() if len(messages) else messages
+    if len(agent):
+        agent["cum_tokens"] = agent.tokens_output.fillna(0).cumsum() + agent.tokens_reasoning.fillna(0).cumsum()
+        agent["cum_cost"] = agent.cost.fillna(0).cumsum()
+        col5, col6 = st.columns(2)
+        with col5:
+            fig = px.area(agent, x="created_at", y="cum_tokens",
+                          labels={"cum_tokens": "Tokens cumulés", "created_at": ""})
+            chart(fig, "session_tokens")
+        with col6:
+            fig = px.line(agent, x="created_at", y="cum_cost", markers=True,
+                          labels={"cum_cost": "Coût cumulé ($)", "created_at": ""})
+            chart(fig, "session_cost")
+
+    st.markdown("#### Chronologie des appels outils")
     timeline = connection.execute("""
-        select date_trunc('minute', created_at) as minute, role, count(*) as messages
-        from messages where session_id = ? group by minute, role order by minute
+        select tool, status, started_at,
+               coalesce(updated_at, started_at) as finished_at,
+               epoch(coalesce(updated_at, started_at) - started_at) as duration_s
+        from tools
+        where session_id = ? and started_at is not null
+        order by started_at
     """, [session_id]).df()
     if len(timeline):
-        st.area_chart(timeline.pivot(index="minute", columns="role", values="messages").fillna(0), height=260)
+        fig = px.timeline(
+            timeline, x_start="started_at", x_end="finished_at", y="tool",
+            color="status", opacity=0.85, hover_data=["duration_s"],
+            labels={"tool": "", "status": "Statut", "duration_s": "Durée (s)"},
+        )
+        fig.update_yaxes(autorange="reversed", categoryorder="total ascending")
+        chart(fig, "tool_timeline")
+
+        stats = timeline.groupby("tool").duration_s.agg(["mean", "max", "count"]).reset_index()
+        stats = stats.sort_values("mean", ascending=False)
+        colA, colB = st.columns([2, 1])
+        with colA:
+            fig = px.bar(stats, x="tool", y="mean", labels={"mean": "Durée moyenne (s)", "tool": ""})
+            chart(fig, "tool_avg_duration")
+        with colB:
+            st.markdown("**Détail des durées**")
+            st.dataframe(
+                stats.rename(columns={"mean": "moyenne (s)", "max": "max (s)", "count": "appels"})
+                .round(2),
+                hide_index=True, use_container_width=True,
+            )
+    else:
+        st.caption("Aucun appel outil horodaté dans cette session.")
 
 with raw_tab:
     st.dataframe(
