@@ -42,7 +42,8 @@ Spark lit les mêmes tables Iceberg (dédupliquées) et produit les agrégats
 - `rustfs` expose l'API S3 sur `localhost:9000` et sa console sur
   `localhost:9001`.
 - `iceberg-rest` expose le catalogue Iceberg sur `localhost:8181` et utilise
-  RustFS comme warehouse.
+  RustFS comme warehouse. Son catalogue SQLite est persisté dans le volume
+  `iceberg-catalog`.
 - `sink` consomme les topics et alimente Iceberg en continu.
 - `dashboard` est activé par le profil Docker `dashboard` et écoute sur
   `localhost:8501`.

@@ -85,5 +85,5 @@ docker-compose --profile spark down
 docker-compose down
 ```
 
-Les volumes `rustfs-data` et `redpanda-data` ne sont pas supprimés par
-`docker-compose down`.
+Les volumes `rustfs-data`, `redpanda-data` et `iceberg-catalog` ne sont pas
+supprimés par `docker-compose down`.
