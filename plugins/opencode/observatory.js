@@ -3,12 +3,12 @@
 // Runs in two modes, with the same code:
 //   - OpenCode 2 plugin: publishes new rows when an answer ends, and once at
 //     startup to catch up on anything missed while Redpanda was unreachable;
-//   - CLI: node opencode-plugin/observatory.js [--full] [--dry-run]
+//   - CLI: node plugins/opencode/observatory.js [--full] [--dry-run]
 //
 // No dependencies: SQLite comes from the runtime (bun:sqlite inside OpenCode,
 // node:sqlite from the CLI), Avro is encoded here, and events go through the
 // Schema Registry and the HTTP Proxy of Redpanda with fetch().
-// See opencode-plugin/README.md for installation and behaviour.
+// See plugins/opencode/README.md for installation and behaviour.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 // realpath: the plugin is loaded through a symlink, the project lives next to it.
 const FILE = realpathSync(fileURLToPath(import.meta.url));
-const ROOT = dirname(dirname(FILE));
+const ROOT = dirname(dirname(dirname(FILE)));
 const DATASETS = ["sessions", "messages", "parts", "tools"];
 const KEYS = { sessions: "session_id", messages: "message_id", parts: "part_id", tools: "part_id" };
 const TRIGGERS = new Set([
@@ -31,7 +31,7 @@ const BATCH_BYTES = 512 * 1024;
 
 // OpenCode does not inherit the project's environment: read .env, and let
 // real environment variables win (used by the CLI and the tests).
-function loadConfig() {
+export function loadConfig() {
   const values = {};
   const envFile = join(ROOT, ".env");
   if (existsSync(envFile)) {
@@ -50,6 +50,9 @@ function loadConfig() {
     topicPrefix: env.KAFKA_TOPIC_PREFIX || "opencode",
     registryUrl: (env.SCHEMA_REGISTRY_URL || "http://localhost:8081").replace(/\/$/, ""),
     proxyUrl: (env.KAFKA_HTTP_PROXY_URL || "http://localhost:8082").replace(/\/$/, ""),
+    // Used by plugins/claude/observatory.js, which shares this .env.
+    claudeProjects: env.CLAUDE_PROJECTS_DIR || join(homedir(), ".claude/projects"),
+    claudeStateFile: fromRoot(env.CLAUDE_STATE_FILE || "data/state/claude-code-state.json"),
   };
 }
 
@@ -128,7 +131,7 @@ export async function extract(database, watermarks) {
       tokens_reasoning: row.tokens_reasoning || 0, tokens_cache_read: row.tokens_cache_read || 0,
       tokens_cache_write: row.tokens_cache_write || 0,
       created_at: micros(row.time_created), updated_at: micros(row.time_updated),
-      _watermark: row.time_updated,
+      source: "opencode", _watermark: row.time_updated,
     });
   }
 
@@ -143,7 +146,7 @@ export async function extract(database, watermarks) {
         finish: data.finish ?? "", cost: data.cost || 0,
         tokens_input: tokens.input || 0, tokens_output: tokens.output || 0,
         tokens_reasoning: tokens.reasoning || 0,
-        created_at: micros(row.time_created), updated_at: micros(updated), _watermark: updated,
+        created_at: micros(row.time_created), updated_at: micros(updated), source: "opencode", _watermark: updated,
       });
     }
 
@@ -158,7 +161,7 @@ export async function extract(database, watermarks) {
         out.parts.push({
           part_id: partId, message_id: row.id, session_id: row.session_id, type: kind,
           text: text(part.text ?? ""), created_at: micros(time.created ?? row.time_created),
-          updated_at: micros(updated), _watermark: updated,
+          updated_at: micros(updated), source: "opencode", _watermark: updated,
         });
       }
       if (kind === "tool" && updated > (watermarks.tools ?? 0)) {
@@ -169,7 +172,7 @@ export async function extract(database, watermarks) {
           input: JSON.stringify(state.input ?? {}), output: text(state.content ?? state.error ?? ""),
           started_at: micros(time.ran ?? time.created ?? row.time_created),
           created_at: micros(time.created ?? row.time_created),
-          updated_at: micros(updated), _watermark: updated,
+          updated_at: micros(updated), source: "opencode", _watermark: updated,
         });
       }
     });
@@ -279,7 +282,7 @@ async function sendBatch(config, topic, records) {
   }
 }
 
-async function publish(config, name, rows) {
+export async function publish(config, name, rows) {
   const topic = `${config.topicPrefix}.${name}`;
   const schema = JSON.parse(schemas[name]);
   // Encode everything first: a record that breaks the contract fails before any send.
@@ -418,7 +421,7 @@ function isCommandLine() {
 if (isCommandLine()) {
   const args = new Set(process.argv.slice(2));
   if (args.has("--help") || args.has("-h")) {
-    console.log("Usage: node opencode-plugin/observatory.js [--full] [--dry-run]");
+    console.log("Usage: node plugins/opencode/observatory.js [--full] [--dry-run]");
   } else {
     sync({ full: args.has("--full"), dryRun: args.has("--dry-run") })
       .then((summary) => console.log(summary))

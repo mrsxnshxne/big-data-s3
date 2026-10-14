@@ -1,14 +1,16 @@
 # OpenCode Observatory
 
-Pipeline local d'analyse des conversations OpenCode. Le projet extrait la base
-SQLite locale d'OpenCode depuis un plugin OpenCode, publie les changements sous forme d'événements dans
+Pipeline local d'analyse des conversations OpenCode et Claude Code. Le projet
+extrait la base SQLite locale d'OpenCode depuis un plugin OpenCode et les
+transcripts de Claude Code (`~/.claude/projects`), publie les changements sous forme d'événements dans
 un broker Redpanda, les écrit en continu dans des tables Apache Iceberg
 (stockées sur un objet S3 compatible) et les interroge avec DuckDB dans un
 dashboard Streamlit.
 
 ```text
-opencode.db
-    -> plugin OpenCode (fin de chaque réponse, watermark incrémental, Avro)
+opencode.db                      ~/.claude/projects/*.jsonl
+    -> plugin OpenCode               -> producteur Claude Code (hook Stop)
+       (fin de chaque réponse, watermark incrémental, Avro, colonne source)
     -> Redpanda (topics opencode.sessions/messages/parts/tools)
     -> sink.py (append par lots)
     -> Apache Iceberg REST
@@ -52,23 +54,32 @@ Modifiez `.env` si nécessaire. Le fichier `.env` ne doit jamais être commité.
 ## Démarrage local
 
 ```sh
-docker-compose up -d                 # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
-node opencode-plugin/observatory.js  # première publication de l'historique
+docker-compose up -d                  # rustfs, iceberg-rest, redpanda (+ registry, HTTP proxy), topics, sink
+node plugins/opencode/observatory.js  # historique OpenCode
+node plugins/claude/observatory.js    # historique Claude Code
 streamlit run app.py --server.address=127.0.0.1
 ```
 
 Dashboard : <http://localhost:8501>
 
-Pour publier automatiquement à la fin de chaque réponse, installez le plugin
-OpenCode, puis redémarrez OpenCode :
+### Plugins de collecte
 
-```sh
-ln -s "$PWD/opencode-plugin/observatory.js" ~/.config/opencode/plugins/observatory.js
-```
+Les producteurs sont dans [`plugins/`](plugins/README.md), un dossier par
+outil. Chacun a son guide d'installation et de désinstallation :
 
-Le plugin publie aussi au démarrage d'OpenCode ce qui n'a pas pu partir.
-Désinstallation, configuration et fonctionnement détaillé :
-[opencode-plugin/README.md](opencode-plugin/README.md).
+| Outil | Guide |
+| --- | --- |
+| OpenCode | [plugins/opencode/README.md](plugins/opencode/README.md#installation) |
+| Claude Code | [plugins/claude/README.md](plugins/claude/README.md#installation) |
+
+> Si le plugin OpenCode a été installé quand il était dans `opencode-plugin/`,
+> son lien est cassé : voir
+> [la migration](plugins/opencode/README.md#migration-depuis-opencode-plugin).
+
+Les lignes portent
+`source = "claude-code"` ; le dashboard propose un filtre **Source**
+(Tous / OpenCode / Claude Code). Le coût Claude Code est **estimé** à partir
+des tarifs API par modèle.
 
 Le sink peut aussi tourner hors Docker dans un terminal dédié :
 

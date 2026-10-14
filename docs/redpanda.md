@@ -4,7 +4,7 @@
 
 Redpanda est un broker de messages compatible Kafka, sans JVM. Il sert de
 zone de tampon entre le producteur (le plugin OpenCode
-`opencode-plugin/observatory.js`) et le sink streaming
+`plugins/opencode/observatory.js`) et le sink streaming
 (`sink.py`). Le producteur ne publie pas de fichiers vers S3 : il émet des
 événements Avro, et c'est le sink qui écrit dans Iceberg, donc dans S3.
 
@@ -101,7 +101,7 @@ comptés sans contact avec le broker.
 docker-compose up -d redpanda
 python3 sink.py                 # terminal dédié, ou :
 docker-compose up -d sink       # sink dans Docker
-node opencode-plugin/observatory.js   # une publication (le plugin publie ensuite seul)
+node plugins/opencode/observatory.js   # une publication (le plugin publie ensuite seul)
 ```
 
 Le broker hôte est `localhost:9092` ; depuis le réseau Compose, les conteneurs

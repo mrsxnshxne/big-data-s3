@@ -10,18 +10,21 @@ import pyarrow as pa
 import streamlit as st
 from pyiceberg.catalog import load_catalog
 
-st.set_page_config(page_title="OpenCode Observatory", page_icon="◌", layout="wide")
+st.set_page_config(page_title="Observatory", page_icon="◌", layout="wide")
 
 ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "http://localhost:8181")
 ICEBERG_NAMESPACE = os.getenv("ICEBERG_NAMESPACE", "analytics")
 TABLES = ("sessions", "messages", "parts", "tools")
 PRIMARY_KEYS = {"sessions": "session_id", "messages": "message_id", "parts": "part_id", "tools": "part_id"}
+# Rows written before the source column existed come from OpenCode.
+SOURCES = {"opencode": "◌ OpenCode", "claude-code": "✳ Claude Code"}
+DEFAULT_SOURCE = "opencode"
 
 TOOL_ICONS = {
-    "read": "📖", "write": "✍️", "edit": "🖊️", "multi_edit": "🖊️",
+    "read": "📖", "write": "✍️", "edit": "🖊️", "multi_edit": "🖊️", "multiedit": "🖊️", "notebookedit": "🖊️",
     "bash": "💻", "shell": "💻", "exec": "💻",
     "grep": "🔎", "glob": "📂", "ls": "🗂️", "search": "🔎",
-    "task": "🤖", "subtask": "🤖",
+    "task": "🤖", "subtask": "🤖", "agent": "🤖",
     "webfetch": "🌐", "websearch": "🌐", "fetch": "🌐",
     "todowrite": "📋", "question": "❓", "apply_patch": "🩹",
     "skill": "🎯", "memory": "🧠",
@@ -59,32 +62,35 @@ def load_tables(catalog_uri: str) -> dict[str, pa.Table]:
     tables = {}
     for name in TABLES:
         try:
-            tables[name] = catalog.load_table(f"{ICEBERG_NAMESPACE}.{name}").scan().to_arrow()
+            table = catalog.load_table(f"{ICEBERG_NAMESPACE}.{name}").scan().to_arrow()
         except Exception:
-            pass
+            continue
+        if "source" not in table.schema.names:
+            table = table.append_column("source", pa.nulls(len(table), pa.string()))
+        tables[name] = table
     return tables
 
 
-def dedup_view_sql(name: str) -> str:
-    """The sink appends events; keep only the latest version of each row."""
+def dedup_view_sql(name: str, sources: list[str]) -> str:
+    """The sink appends events; keep only the latest version of each row of the chosen sources."""
     key = PRIMARY_KEYS[name]
+    allowed = ", ".join(f"'{source}'" for source in sources if source in SOURCES)
     return f"""
         create or replace view {name} as
         select * exclude (_version) from (
-            select *, row_number() over (
-                partition by {key} order by updated_at desc
-            ) as _version
+            select * replace (coalesce(source, '{DEFAULT_SOURCE}') as source),
+                   row_number() over (partition by {key} order by updated_at desc) as _version
             from raw_{name}
         )
-        where _version = 1
+        where _version = 1 and source in ({allowed or "null"})
     """
 
 
-def connect(tables: dict[str, pa.Table]) -> duckdb.DuckDBPyConnection:
+def connect(tables: dict[str, pa.Table], sources: list[str]) -> duckdb.DuckDBPyConnection:
     connection = duckdb.connect()
     for name, table in tables.items():
         connection.register(f"raw_{name}", table)
-        connection.execute(dedup_view_sql(name))
+        connection.execute(dedup_view_sql(name, sources))
     return connection
 
 
@@ -155,7 +161,7 @@ def render_tool(part: object) -> None:
     """One tool call: compact titled expander with structured input/output."""
     tool = str(part.tool or "outil")
     status = str(part.status or "")
-    icon = TOOL_ICONS.get(tool, "🔧")
+    icon = TOOL_ICONS.get(tool.lower(), "🔧")
     badge = STATUS_BADGES.get(status, "❔")
     summary = tool_summary(part.input)
     title = f"{badge} {icon} **{tool}**"
@@ -225,23 +231,38 @@ def render_message(message: object, parts: "pd_DataFrame") -> None:  # type: ign
                 st.markdown(part.text)
 
 
+source_choice = st.sidebar.radio(
+    "Source", ["all", *SOURCES], horizontal=True,
+    format_func=lambda value: "Tous" if value == "all" else SOURCES[value],
+)
+selected_sources = list(SOURCES) if source_choice == "all" else [source_choice]
+# Claude Code transcripts carry no price: its costs come from a price table.
+COST_SUFFIX = " (estimé)" if "claude-code" in selected_sources else ""
+
 tables = load_tables(ICEBERG_CATALOG_URI)
-connection = connect(tables)
+connection = connect(tables, selected_sources)
 available_tables = {row[0] for row in connection.execute("show tables").fetchall()}
 if "sessions" not in available_tables:
     st.error(
         "Aucune donnée dans Iceberg. Démarrez Redpanda et le sink "
-        "(`docker-compose up -d redpanda sink`), puis lancez `node opencode-plugin/observatory.js`."
+        "(`docker-compose up -d redpanda sink`), puis lancez `node plugins/opencode/observatory.js` "
+        "ou `node plugins/claude/observatory.js`."
     )
     st.stop()
 
-st.title("◌ OpenCode Observatory")
+st.title("◌ Observatory")
 
 sessions = connection.sql("select * from sessions order by updated_at desc").df()
+if sessions.empty:
+    st.info("Aucune conversation pour cette source.")
+    st.stop()
 session_id = st.sidebar.selectbox(
     "Conversation",
     sessions.session_id,
-    format_func=lambda value: one_line(sessions.loc[sessions.session_id == value, "title"].iloc[0], 60),
+    format_func=lambda value: (
+        SOURCES[sessions.loc[sessions.session_id == value, "source"].iloc[0]].split()[0] + " "
+        + one_line(sessions.loc[sessions.session_id == value, "title"].iloc[0], 60)
+    ),
 )
 selected = sessions[sessions.session_id == session_id].iloc[0]
 
@@ -264,7 +285,7 @@ with overview_tab:
     top[1].metric("💬 Messages", fmt_count(totals[1]))
     top[2].metric("🔧 Appels outils", fmt_count(totals[2]))
     top[3].metric("🔤 Tokens (sortie + raisonnement)", fmt_count(totals[3]))
-    top[4].metric("💰 Coût total", f"${float(totals[4]):.4f}")
+    top[4].metric(f"💰 Coût total{COST_SUFFIX}", f"${float(totals[4]):.4f}")
 
     daily = connection.execute("""
         select date_trunc('day', created_at)::date as day,
@@ -292,6 +313,18 @@ with overview_tab:
             st.markdown("#### Coût cumulé")
             fig = px.area(daily, x="day", y="cost", labels={"cost": "Coût ($)", "day": ""})
             chart(fig, "daily_cost")
+
+        if len(selected_sources) > 1:
+            by_source = connection.execute("""
+                select date_trunc('day', created_at)::date as day, source, count(*) as messages
+                from messages group by 1, 2 order by 1
+            """).df()
+            st.markdown("#### Activité par source")
+            fig = px.bar(by_source, x="day", y="messages", color="source",
+                         labels={"messages": "Messages", "day": "", "source": "Source"})
+            fig.for_each_trace(lambda trace: trace.update(name=SOURCES.get(trace.name, trace.name)))
+            fig.update_layout(barmode="stack", legend=dict(orientation="h", y=1.15))
+            chart(fig, "daily_by_source")
 
         heat = connection.execute("""
             select extract(dow from created_at)::int as dow,
@@ -333,7 +366,7 @@ with overview_tab:
             chart(fig, "model_cost")
 
 with conversation_tab:
-    meta = []
+    meta = [SOURCES[selected.source]]
     if selected.model:
         meta.append(f"🧩 {selected.model}")
     if selected.agent:
@@ -348,7 +381,8 @@ with conversation_tab:
     top[1].metric("🔧 Outils", int(connection.execute("select count(*) from tools where session_id = ?", [session_id]).fetchone()[0]))
     top[2].metric("🔤 Tokens sortie", fmt_count(selected.tokens_output))
     top[3].metric("🧠 Raisonnement", fmt_count(selected.tokens_reasoning))
-    top[4].metric("💰 Coût", f"${float(selected.cost):.4f}")
+    cost_label = "💰 Coût (estimé)" if selected.source == "claude-code" else "💰 Coût"
+    top[4].metric(cost_label, f"${float(selected.cost):.4f}")
 
     st.subheader(selected.title)
     messages = connection.execute("select * from messages where session_id = ? order by created_at", [session_id]).df()

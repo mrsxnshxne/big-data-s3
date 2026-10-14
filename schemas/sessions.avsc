@@ -17,6 +17,7 @@
     {"name": "tokens_cache_read", "type": ["null", "long"], "default": null},
     {"name": "tokens_cache_write", "type": ["null", "long"], "default": null},
     {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
-    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "source", "type": ["null", "string"], "default": null}
   ]
 }
