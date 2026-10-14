@@ -10,6 +10,7 @@
     {"name": "type", "type": ["null", "string"], "default": null},
     {"name": "text", "type": ["null", "string"], "default": null},
     {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
-    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "source", "type": ["null", "string"], "default": null}
   ]
 }

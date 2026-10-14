@@ -1,7 +1,8 @@
 """Stream Redpanda events into Iceberg tables.
 
-This consumer subscribes to the OpenCode topics produced by the OpenCode
-plugin (``opencode-plugin/observatory.js``),
+This consumer subscribes to the topics produced by the OpenCode plugin
+(``opencode-plugin/observatory.js``) and the Claude Code producer
+(``claude-code-plugin/observatory.js``),
 decodes the Avro events with the schema fetched from the Redpanda Schema
 Registry, batches them and appends them to the ``analytics`` tables of the
 configured Iceberg catalog. The physical data lands in S3/RustFS because the
@@ -43,6 +44,7 @@ ARROW_SCHEMAS: dict[str, pa.Schema] = {
         pa.field("tokens_reasoning", pa.int64()), pa.field("tokens_cache_read", pa.int64()),
         pa.field("tokens_cache_write", pa.int64()),
         pa.field("created_at", TS), pa.field("updated_at", TS),
+        pa.field("source", pa.string()),
     ]),
     "messages": pa.schema([
         pa.field("message_id", pa.string()), pa.field("session_id", pa.string()),
@@ -52,11 +54,13 @@ ARROW_SCHEMAS: dict[str, pa.Schema] = {
         pa.field("tokens_input", pa.int64()), pa.field("tokens_output", pa.int64()),
         pa.field("tokens_reasoning", pa.int64()),
         pa.field("created_at", TS), pa.field("updated_at", TS),
+        pa.field("source", pa.string()),
     ]),
     "parts": pa.schema([
         pa.field("part_id", pa.string()), pa.field("message_id", pa.string()),
         pa.field("session_id", pa.string()), pa.field("type", pa.string()),
         pa.field("text", pa.string()), pa.field("created_at", TS), pa.field("updated_at", TS),
+        pa.field("source", pa.string()),
     ]),
     "tools": pa.schema([
         pa.field("part_id", pa.string()), pa.field("message_id", pa.string()),
@@ -64,6 +68,7 @@ ARROW_SCHEMAS: dict[str, pa.Schema] = {
         pa.field("call_id", pa.string()), pa.field("status", pa.string()),
         pa.field("input", pa.string()), pa.field("output", pa.string()),
         pa.field("started_at", TS), pa.field("created_at", TS), pa.field("updated_at", TS),
+        pa.field("source", pa.string()),
     ]),
 }
 
@@ -167,6 +172,13 @@ class IcebergSink:
     def append(self, name: str, records: list[dict]) -> None:
         identifier = f"{NAMESPACE}.{name}"
         table = self.catalog.create_table_if_not_exists(identifier, schema=iceberg_schema(name))
+        missing = set(ARROW_SCHEMAS[name].names) - {field.name for field in table.schema().fields}
+        if missing:
+            # Tables created before a column was added (e.g. source): evolve them in place.
+            with table.update_schema() as update:
+                update.union_by_name(ARROW_SCHEMAS[name])
+            table = self.catalog.load_table(identifier)
+            print(f"added {', '.join(sorted(missing))} to {identifier}", flush=True)
         table.append(to_arrow(name, records))
         print(f"appended {len(records)} rows to {identifier}", flush=True)
 

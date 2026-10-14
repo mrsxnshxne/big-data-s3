@@ -15,6 +15,7 @@
     {"name": "tokens_output", "type": ["null", "long"], "default": null},
     {"name": "tokens_reasoning", "type": ["null", "long"], "default": null},
     {"name": "created_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
-    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null}
+    {"name": "updated_at", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null},
+    {"name": "source", "type": ["null", "string"], "default": null}
   ]
 }

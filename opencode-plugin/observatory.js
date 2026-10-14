@@ -31,7 +31,7 @@ const BATCH_BYTES = 512 * 1024;
 
 // OpenCode does not inherit the project's environment: read .env, and let
 // real environment variables win (used by the CLI and the tests).
-function loadConfig() {
+export function loadConfig() {
   const values = {};
   const envFile = join(ROOT, ".env");
   if (existsSync(envFile)) {
@@ -50,6 +50,9 @@ function loadConfig() {
     topicPrefix: env.KAFKA_TOPIC_PREFIX || "opencode",
     registryUrl: (env.SCHEMA_REGISTRY_URL || "http://localhost:8081").replace(/\/$/, ""),
     proxyUrl: (env.KAFKA_HTTP_PROXY_URL || "http://localhost:8082").replace(/\/$/, ""),
+    // Used by claude-code-plugin/observatory.js, which shares this .env.
+    claudeProjects: env.CLAUDE_PROJECTS_DIR || join(homedir(), ".claude/projects"),
+    claudeStateFile: fromRoot(env.CLAUDE_STATE_FILE || "data/state/claude-code-state.json"),
   };
 }
 
@@ -128,7 +131,7 @@ export async function extract(database, watermarks) {
       tokens_reasoning: row.tokens_reasoning || 0, tokens_cache_read: row.tokens_cache_read || 0,
       tokens_cache_write: row.tokens_cache_write || 0,
       created_at: micros(row.time_created), updated_at: micros(row.time_updated),
-      _watermark: row.time_updated,
+      source: "opencode", _watermark: row.time_updated,
     });
   }
 
@@ -143,7 +146,7 @@ export async function extract(database, watermarks) {
         finish: data.finish ?? "", cost: data.cost || 0,
         tokens_input: tokens.input || 0, tokens_output: tokens.output || 0,
         tokens_reasoning: tokens.reasoning || 0,
-        created_at: micros(row.time_created), updated_at: micros(updated), _watermark: updated,
+        created_at: micros(row.time_created), updated_at: micros(updated), source: "opencode", _watermark: updated,
       });
     }
 
@@ -158,7 +161,7 @@ export async function extract(database, watermarks) {
         out.parts.push({
           part_id: partId, message_id: row.id, session_id: row.session_id, type: kind,
           text: text(part.text ?? ""), created_at: micros(time.created ?? row.time_created),
-          updated_at: micros(updated), _watermark: updated,
+          updated_at: micros(updated), source: "opencode", _watermark: updated,
         });
       }
       if (kind === "tool" && updated > (watermarks.tools ?? 0)) {
@@ -169,7 +172,7 @@ export async function extract(database, watermarks) {
           input: JSON.stringify(state.input ?? {}), output: text(state.content ?? state.error ?? ""),
           started_at: micros(time.ran ?? time.created ?? row.time_created),
           created_at: micros(time.created ?? row.time_created),
-          updated_at: micros(updated), _watermark: updated,
+          updated_at: micros(updated), source: "opencode", _watermark: updated,
         });
       }
     });
@@ -279,7 +282,7 @@ async function sendBatch(config, topic, records) {
   }
 }
 
-async function publish(config, name, rows) {
+export async function publish(config, name, rows) {
   const topic = `${config.topicPrefix}.${name}`;
   const schema = JSON.parse(schemas[name]);
   // Encode everything first: a record that breaks the contract fails before any send.
