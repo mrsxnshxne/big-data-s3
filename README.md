@@ -115,5 +115,4 @@ docker-compose --profile spark run --rm spark
 
 Le job lit le catalogue Iceberg (`ICEBERG_CATALOG_URI`) et déduplique chaque
 table par identifiant. Sortie par défaut dans le warehouse :
-`SPARK_OUTPUT=s3a://iceberg-warehouse/spark`. Sans `ICEBERG_CATALOG_URI`, il
-retombe sur la lecture Parquet locale via `SPARK_INPUT`.
+`SPARK_OUTPUT=s3a://iceberg-warehouse/spark`.
