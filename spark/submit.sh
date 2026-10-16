@@ -8,4 +8,4 @@ fi
 
 exec spark-submit \
   --packages "$PACKAGES" \
-  spark/analytics.py "$@"
+  "$(dirname "$0")/analytics.py" "$@"

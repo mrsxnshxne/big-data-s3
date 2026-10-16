@@ -1,6 +1,6 @@
 #!/bin/sh
 # Ouvre les tunnels SSH vers l'engine podman sur homelab pour le client local.
-# Utilisé par app.py (Iceberg REST + S3) et le plugin OpenCode (Schema Registry + HTTP Proxy) via .env.
+# Utilisé par app.py (Iceberg REST + S3) et les plugins OpenCode et Claude Code (Schema Registry + HTTP Proxy) via .env.
 
 set -eu
 

@@ -71,7 +71,7 @@ Spark.
 - au démarrage d'OpenCode, pour rattraper ce qui n'a pas pu partir.
 
 Une seule synchronisation tourne à la fois. Si Redpanda est injoignable,
-l'erreur est journalisée dans `opencode-analytics.log` et OpenCode n'est pas
+l'erreur est journalisée dans `observatory.log` et OpenCode n'est pas
 affecté.
 
 ## Commandes

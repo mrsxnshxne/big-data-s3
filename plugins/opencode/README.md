@@ -70,7 +70,7 @@ démarrage.
 - OpenCode 2 (testé avec 2.0.17) ;
 - la stack Docker démarrée (`docker-compose up -d`), avec le Schema Registry
   (port 8081) et le HTTP Proxy (port 8082) de Redpanda joignables depuis la
-  machine où tourne OpenCode, directement ou via `./opencode-tunnel.sh` ;
+  machine où tourne OpenCode, directement ou via `./scripts/tunnel.sh` ;
 - Node 22.13 ou plus récent, uniquement pour la ligne de commande.
 
 ## Installation
@@ -104,7 +104,7 @@ du dépôt**.
 4. **Redémarrer OpenCode**, puis contrôler le journal :
 
    ```sh
-   tail -f opencode-analytics.log
+   tail -f observatory.log
    # … [observatory] ready for /chemin/du/projet
    # … [observatory] produced to opencode.* -> 0 sessions, 2 messages, 5 parts, 1 tools
    ```
@@ -146,12 +146,12 @@ rien n'est republié.
    ```
 
 2. **Redémarrer OpenCode.** La ligne `ready for` ne doit plus apparaître
-   dans `opencode-analytics.log`.
+   dans `observatory.log`.
 
 3. Facultatif, nettoyer le dépôt :
 
    ```sh
-   rm -f data/state/producer-state.json opencode-analytics.log
+   rm -f data/state/producer-state.json observatory.log
    ```
 
    Sans état, une réinstallation republie tout l'historique. Les doublons qui
@@ -174,7 +174,7 @@ donc le `.env` du dépôt. Une variable d'environnement réelle l'emporte sur le
 | `KAFKA_HTTP_PROXY_URL` | `http://localhost:8082` | HTTP Proxy de Redpanda |
 | `KAFKA_TOPIC_PREFIX` | `opencode` | Préfixe des topics |
 | `PRODUCER_STATE_FILE` | `data/state/producer-state.json` | Watermarks (relatif au dépôt) |
-| `OBSERVATORY_LOG` | `opencode-analytics.log` | Journal du plugin (relatif au dépôt) |
+| `OBSERVATORY_LOG` | `observatory.log` | Journal du plugin (relatif au dépôt) |
 
 ## Ligne de commande
 

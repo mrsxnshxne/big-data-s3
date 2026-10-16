@@ -58,7 +58,7 @@ la consommation. Le dashboard l'indique avec la mention « (estimé) ».
 - Node 22 ou plus récent ;
 - la stack Docker démarrée (`docker-compose up -d`), avec le Schema Registry
   (8081) et le HTTP Proxy (8082) de Redpanda joignables depuis la machine où
-  tourne Claude Code, directement ou via `./opencode-tunnel.sh` ;
+  tourne Claude Code, directement ou via `./scripts/tunnel.sh` ;
 - un sink à jour, qui ajoute la colonne `source` aux tables existantes
   (`docker-compose up -d --build sink`) ;
 - `jq`, uniquement pour installer le hook en une commande (`brew install jq`).
@@ -140,7 +140,7 @@ réponse. Toutes les commandes se lancent **depuis la racine du dépôt**.
    une réponse, le journal doit afficher une ligne `[claude-code]` :
 
    ```sh
-   tail -f opencode-analytics.log
+   tail -f observatory.log
    # … [claude-code] produced to opencode.* -> 1 sessions, 2 messages, 5 parts, 1 tools
    ```
 
@@ -174,7 +174,7 @@ l'ancien hook.
 
 2. Vérifier : `/hooks` dans Claude Code ne doit plus lister ce hook, et aucune
    nouvelle ligne `[claude-code]` ne doit apparaître dans
-   `opencode-analytics.log`.
+   `observatory.log`.
 
 3. Facultatif, nettoyer le dépôt :
 

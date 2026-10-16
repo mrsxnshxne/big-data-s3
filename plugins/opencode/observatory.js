@@ -46,7 +46,7 @@ export function loadConfig() {
   return {
     database: env.OPENCODE_DB || join(homedir(), ".local/share/opencode/opencode.db"),
     stateFile: fromRoot(env.PRODUCER_STATE_FILE || "data/state/producer-state.json"),
-    logFile: fromRoot(env.OBSERVATORY_LOG || "opencode-analytics.log"),
+    logFile: fromRoot(env.OBSERVATORY_LOG || "observatory.log"),
     topicPrefix: env.KAFKA_TOPIC_PREFIX || "opencode",
     registryUrl: (env.SCHEMA_REGISTRY_URL || "http://localhost:8081").replace(/\/$/, ""),
     proxyUrl: (env.KAFKA_HTTP_PROXY_URL || "http://localhost:8082").replace(/\/$/, ""),

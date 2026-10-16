@@ -50,7 +50,7 @@ Vérifier ensuite `docker logs big-data-s3-sink` (les append doivent défiler).
 
 ### Le plugin ne publie pas
 
-Lire `opencode-analytics.log` : le plugin y écrit son chargement
+Lire `observatory.log` : le plugin y écrit son chargement
 (`ready for …`), chaque publication et chaque erreur. Les causes courantes
 (lien absent, HTTP Proxy injoignable, schéma incompatible) sont détaillées
 dans [le README du plugin](../plugins/opencode/README.md#dépannage).
@@ -80,7 +80,7 @@ l'endpoint est `localhost:9000` ; depuis un conteneur Compose,
 ### Spark ne trouve pas les tables
 
 Vérifier `ICEBERG_CATALOG_URI`, `ICEBERG_WAREHOUSE` et la présence du package
-`iceberg-spark-runtime` dans les `--packages` (`opencode-spark.sh` et le
+`iceberg-spark-runtime` dans les `--packages` (`spark/submit.sh` et le
 service Docker l'ajoutent). En Docker, utiliser les chemins `s3a://` et non
 `http://localhost:9000` comme chemin de données Spark.
 

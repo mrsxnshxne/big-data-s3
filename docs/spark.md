@@ -25,12 +25,12 @@ lectures lorsqu'une période est filtrée.
 Avec Java et PySpark installés :
 
 ```sh
-pip install -r requirements-spark.txt
+pip install -r spark/requirements.txt
 set -a; . ./.env; set +a
-./opencode-spark.sh --output data/spark
+./spark/submit.sh --output data/spark
 ```
 
-`opencode-spark.sh` ajoute automatiquement le runtime
+`spark/submit.sh` ajoute automatiquement le runtime
 `iceberg-spark-runtime-3.5_2.12` aux `--packages` lorsque
 `ICEBERG_CATALOG_URI` est défini. Le script utilise `local[*]` par défaut ;
 le master peut être changé avec `--master` ou `SPARK_MASTER`.

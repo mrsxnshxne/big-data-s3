@@ -57,7 +57,7 @@ Le flux est continu :
 
 ```sh
 python3 -m venv .venv
-. ./venv.sh activate
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 docker-compose up -d            # rustfs, iceberg-rest, redpanda, topics, sink

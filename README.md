@@ -44,7 +44,7 @@ sensibles. Ne rendez pas les buckets publics et ne commitez jamais `.env`.
 
 ```sh
 python3 -m venv .venv
-. ./venv.sh activate
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
@@ -87,12 +87,6 @@ Le sink peut aussi tourner hors Docker dans un terminal dédié :
 python3 sink.py
 ```
 
-Le venv peut être désactivé avec :
-
-```sh
-. ./venv.sh deactivate
-```
-
 ## Dashboard Docker
 
 Le dashboard peut aussi tourner dans Docker et lire Iceberg via le catalogue :
@@ -120,9 +114,9 @@ utilise `localhost:8181`.
 En local, avec Java et PySpark installés :
 
 ```sh
-pip install -r requirements-spark.txt
+pip install -r spark/requirements.txt
 set -a; . ./.env; set +a
-./opencode-spark.sh --output data/spark
+./spark/submit.sh --output data/spark
 ```
 
 Pour exécuter Spark dans Docker et lire les tables Iceberg du warehouse :
