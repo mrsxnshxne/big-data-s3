@@ -8,7 +8,15 @@ Le dashboard Streamlit permet de :
 - compter les messages et appels d'outils ;
 - consulter les tokens, le raisonnement et le coût ;
 - visualiser les types de parties et les outils utilisés ;
-- parcourir le fil des messages et les entrées/sorties d'outils.
+- parcourir le fil des messages et les entrées/sorties d'outils ;
+- comparer deux conversations (onglet **⚖️ Comparer**).
+
+L'onglet **Comparer** ignore le filtre Source, pour pouvoir opposer un même
+modèle dans OpenCode et dans Claude Code, ou deux modèles dans le même outil. Il
+met côte à côte durée, temps par tour, prompts, tokens, contexte et cache, coût,
+appels et erreurs d'outils, puis désigne la meilleure valeur de chaque critère.
+Ce verdict n'a de sens qu'à tâche égale (même prompt, même dépôt) ; les coûts
+Claude Code sont estimés et leurs tokens générés incluent la réflexion.
 
 Les tables sont scannées depuis Iceberg et mises en cache trente secondes. Les
 lignes sont dédupliquées dans DuckDB (dernier `updated_at` par identifiant).
