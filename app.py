@@ -13,6 +13,25 @@ from pyiceberg.catalog import load_catalog
 
 st.set_page_config(page_title="Observatory", page_icon="◌", layout="wide")
 
+# Streamlit's own CSS hooks: cosmetic only, the page stays readable without them.
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2.2rem; max-width: 1400px; }
+    [data-testid="stMetric"] {
+        background: rgba(128, 128, 128, 0.08);
+        border: 1px solid rgba(128, 128, 128, 0.18);
+        border-radius: 12px;
+        padding: 0.8rem 1rem;
+    }
+    [data-testid="stMetricLabel"] p { font-size: 0.85rem; opacity: 0.75; }
+    [data-testid="stMetricValue"] { font-size: 1.5rem; }
+    h4 { margin-top: 1.2rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "http://localhost:8181")
 ICEBERG_NAMESPACE = os.getenv("ICEBERG_NAMESPACE", "analytics")
 TABLES = ("sessions", "messages", "parts", "tools")
@@ -40,9 +59,10 @@ STATUS_BADGES = {
 }
 PLOTLY_MARGIN = dict(l=40, r=20, t=10, b=30)
 DOW_FR = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]
-# Keys that best summarise what a tool call was about, in order of preference.
+# Colours are fixed per role: the reference conversation is always blue, the one compared against it orange.
 COMPARE_COLORS = ("#3b82f6", "#f97316")  # blue, orange
 COMPARE_MARKS = ("🔵", "🟠")
+# Keys that best summarise what a tool call was about, in order of preference.
 SUMMARY_KEYS = ("path", "file_path", "filePath", "command", "cmd", "pattern", "query", "url", "description", "prompt", "subject", "skill", "id")
 
 
@@ -109,14 +129,21 @@ def fmt_count(value: object) -> str:
         number = float(value or 0)
     except (TypeError, ValueError):
         return "—"
+    if number != number:  # NaN: a null count read back from a DataFrame
+        return "—"
     for threshold, suffix in ((1_000_000, "M"), (1_000, "k")):
         if abs(number) >= threshold:
             return f"{number / threshold:.1f} {suffix}"
     return f"{int(number):,}"
 
 
+def has_value(value: object) -> bool:
+    """Non-empty cell. pandas NA is neither truthy nor falsy, so `if value:` raises on it."""
+    return not pd.isna(value) and value != ""
+
+
 def one_line(value: object, limit: int) -> str:
-    text = " ".join(str(value or "").split())
+    text = " ".join(str(value).split()) if has_value(value) else ""
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -201,7 +228,7 @@ def render_message(message: object, parts: "pd_DataFrame") -> None:  # type: ign
     with st.chat_message("user" if is_user else "assistant", avatar=avatar):
         stats = []
         if not is_user:
-            if message.model:
+            if has_value(message.model):
                 stats.append(f"🧩 {message.model}")
             tokens = int(message.tokens_output or 0) + int(message.tokens_reasoning or 0)
             if tokens:
@@ -265,6 +292,15 @@ def fmt_dollars(value: float) -> str:
 
 def fmt_pct(value: float) -> str:
     return f"{float(value):.0%}"
+
+
+def fmt_datetime(value: object, pattern: str) -> str:
+    return f"{value:{pattern}}" if known(value) else "—"
+
+
+def open_session(session_id: str) -> None:
+    """Button callback: make a conversation the selected one, from any tab."""
+    st.session_state["session_pick"] = session_id
 
 
 # (key, label, which value wins: "low", "high" or None when it is not a quality signal, format)
@@ -410,8 +446,23 @@ session_id = st.sidebar.selectbox(
         SOURCES[sessions.loc[sessions.session_id == value, "source"].iloc[0]].split()[0] + " "
         + one_line(sessions.loc[sessions.session_id == value, "title"].iloc[0], 60)
     ),
+    key="session_pick",
 )
 selected = sessions[sessions.session_id == session_id].iloc[0]
+
+# Summary of the selected conversation, so the sidebar says more than which one is picked.
+with st.sidebar.container(border=True):
+    st.markdown(f"**{SOURCES[selected.source]}**")
+    st.caption(f"🧩 {selected.model if has_value(selected.model) else 'modèle inconnu'}")
+    if has_value(selected.directory):
+        st.caption(f"📁 {selected.directory}")
+    st.caption(f"🕐 Créée le {fmt_datetime(selected.created_at, '%d %b %Y · %H:%M')}")
+    st.caption(f"🔄 Mise à jour {fmt_datetime(selected.updated_at, '%d %b %Y · %H:%M')}")
+    st.caption(
+        f"💰 {fmt_dollars(selected.cost if known(selected.cost) else 0)}{COST_SUFFIX}"
+        f" · 🔤 {fmt_count(selected.tokens_output)} tokens en sortie"
+    )
+st.sidebar.caption(f"{len(sessions)} conversation(s) · données rafraîchies toutes les 30 s")
 
 overview_tab, conversation_tab, stats_tab, compare_tab, raw_tab = st.tabs(
     ["🌐 Vue d'ensemble", "💬 Conversation", "📊 Statistiques", "⚖️ Comparer", "🧾 Appels outil (brut)"]
@@ -433,6 +484,20 @@ with overview_tab:
     top[2].metric("🔧 Appels outils", fmt_count(totals[2]))
     top[3].metric("🔤 Tokens (sortie + raisonnement)", fmt_count(totals[3]))
     top[4].metric(f"💰 Coût total{COST_SUFFIX}", f"${float(totals[4]):.4f}")
+
+    st.markdown("#### Conversations récentes")
+    st.caption("Cliquez sur une conversation pour l'ouvrir dans les onglets Conversation, Statistiques et Comparer.")
+    recent_columns = st.columns(3)
+    for index, row in enumerate(sessions.head(6).itertuples()):
+        with recent_columns[index % 3].container(border=True):
+            st.markdown(f"**{one_line(row.title, 60)}**")
+            st.caption(f"{SOURCES[row.source]} · 🧩 {row.model if has_value(row.model) else 'modèle inconnu'}")
+            st.caption(f"🕐 {fmt_datetime(row.updated_at, '%d %b %Y · %H:%M')}")
+            st.button(
+                "Ouvrir", key=f"open_{row.session_id}", on_click=open_session, args=(row.session_id,),
+                use_container_width=True,
+                type="primary" if row.session_id == session_id else "secondary",
+            )
 
     daily = connection.execute("""
         select date_trunc('day', created_at)::date as day,
@@ -513,12 +578,13 @@ with overview_tab:
             chart(fig, "model_cost")
 
 with conversation_tab:
+    st.subheader(selected.title)
     meta = [SOURCES[selected.source]]
-    if selected.model:
+    if has_value(selected.model):
         meta.append(f"🧩 {selected.model}")
-    if selected.agent:
+    if has_value(selected.agent):
         meta.append(f"🎭 {selected.agent}")
-    if selected.directory:
+    if has_value(selected.directory):
         meta.append(f"📁 {selected.directory}")
     if meta:
         st.caption(" · ".join(meta))
@@ -531,7 +597,7 @@ with conversation_tab:
     cost_label = "💰 Coût (estimé)" if selected.source == "claude-code" else "💰 Coût"
     top[4].metric(cost_label, f"${float(selected.cost):.4f}")
 
-    st.subheader(selected.title)
+    st.divider()
     messages = connection.execute("select * from messages where session_id = ? order by created_at", [session_id]).df()
     render_transcript(connection, messages)
 
@@ -620,142 +686,145 @@ with compare_tab:
     else:
         def candidate_label(value: str) -> str:
             row = candidates.loc[value]
-            model = f" · {row.model}" if row.model else ""
+            model = f" · {row.model}" if has_value(row.model) else ""
             return f"{SOURCES[row.source].split()[0]} {one_line(row.title, 50)}{model}"
 
-        ids = list(candidates.index)
-        first = ids.index(session_id) if session_id in ids else 0
-        pick_a, pick_b = st.columns(2)
-        id_a = pick_a.selectbox(f"{COMPARE_MARKS[0]} Conversation bleue", ids, index=first, format_func=candidate_label, key="compare_a")
-        id_b = pick_b.selectbox(f"{COMPARE_MARKS[1]} Conversation orange", ids, index=1 if first == 0 else 0,
-                                format_func=candidate_label, key="compare_b")
-        if id_a == id_b:
-            st.warning("Choisissez deux conversations différentes.")
-        else:
-            ids = [id_a, id_b]
-            a, b = (session_profile(compare_connection, sid) for sid in ids)
-            names = [
-                f"{mark} {SOURCES[p['source']].split()[0]} {p['model'] or 'modèle inconnu'}"
-                for mark, p in zip(COMPARE_MARKS, (a, b))
-            ]
-            colors = dict(zip(names, COMPARE_COLORS))
+        # The conversation selected in the sidebar is the reference, frozen here; only the other one is picked.
+        others = [sid for sid in candidates.index if sid != session_id]
+        st.caption(
+            "La conversation sélectionnée dans la barre latérale sert de référence. "
+            "Choisissez une seconde conversation à lui opposer."
+        )
+        reference_column, other_column = st.columns(2)
+        reference_column.markdown(f"{COMPARE_MARKS[0]} **Référence**  \n{candidate_label(session_id)}")
+        id_b = other_column.selectbox(
+            f"{COMPARE_MARKS[1]} Comparer avec", others, format_func=candidate_label,
+            key=f"compare_b_{session_id}",
+        )
+        ids = [session_id, id_b]
+        a, b = (session_profile(compare_connection, sid) for sid in ids)
+        names = [
+            f"{mark} {SOURCES[p['source']].split()[0]} {p['model'] if has_value(p['model']) else 'modèle inconnu'}"
+            for mark, p in zip(COMPARE_MARKS, (a, b))
+        ]
+        colors = dict(zip(names, COMPARE_COLORS))
 
-            rows, wins = [], {"A": [], "B": []}
-            for key, label, better, fmt in COMPARE_METRICS:
-                va, vb = a[key], b[key]
-                won = winner(va, vb, better)
-                if won in wins:
-                    wins[won].append(label)
-                rows.append({
-                    "Métrique": label,
-                    COMPARE_MARKS[0]: fmt(va) if known(va) else "—",
-                    COMPARE_MARKS[1]: fmt(vb) if known(vb) else "—",
-                    f"Écart {COMPARE_MARKS[1]} / {COMPARE_MARKS[0]}": f"{(vb - va) / va:+.0%}" if known(va) and known(vb) and va else "",
-                    "Avantage": {"A": COMPARE_MARKS[0], "B": COMPARE_MARKS[1], "=": "="}.get(won, ""),
-                })
+        rows, wins = [], {"A": [], "B": []}
+        for key, label, better, fmt in COMPARE_METRICS:
+            va, vb = a[key], b[key]
+            won = winner(va, vb, better)
+            if won in wins:
+                wins[won].append(label)
+            rows.append({
+                "Métrique": label,
+                COMPARE_MARKS[0]: fmt(va) if known(va) else "—",
+                COMPARE_MARKS[1]: fmt(vb) if known(vb) else "—",
+                f"Écart {COMPARE_MARKS[1]} / {COMPARE_MARKS[0]}": f"{(vb - va) / va:+.0%}" if known(va) and known(vb) and va else "",
+                "Avantage": {"A": COMPARE_MARKS[0], "B": COMPARE_MARKS[1], "=": "="}.get(won, ""),
+            })
 
-            score = st.columns(2)
-            for column, letter, name in zip(score, "AB", names):
-                won = len(wins[letter])
-                column.metric(name, f"{won} point{'s' if won > 1 else ''} gagné{'s' if won > 1 else ''}")
-                if wins[letter]:
-                    column.caption(", ".join(label.split(" ", 1)[1] for label in wins[letter]))
-            st.dataframe(rows, hide_index=True, use_container_width=True)
+        score = st.columns(2)
+        for column, letter, name in zip(score, "AB", names):
+            won = len(wins[letter])
+            column.metric(name, f"{won} point{'s' if won > 1 else ''} gagné{'s' if won > 1 else ''}")
+            if wins[letter]:
+                column.caption(", ".join(label.split(" ", 1)[1] for label in wins[letter]))
+        st.dataframe(rows, hide_index=True, use_container_width=True)
 
-            notes = ["Les écarts n'ont de sens qu'à tâche égale : même prompt, même dépôt."]
-            if "claude-code" in (a["source"], b["source"]):
-                notes.append("Claude Code : coût estimé depuis une table de prix, réflexion comptée dans les tokens générés.")
-            st.caption(" ".join(notes))
+        notes = ["Les écarts n'ont de sens qu'à tâche égale : même prompt, même dépôt."]
+        if "claude-code" in (a["source"], b["source"]):
+            notes.append("Claude Code : coût estimé depuis une table de prix, réflexion comptée dans les tokens générés.")
+        st.caption(" ".join(notes))
 
-            progress = compare_frame(compare_connection, """
-                select minutes, tokens, cost from (
-                    select role,
-                           epoch(created_at - min(created_at) over ()) / 60          as minutes,
-                           coalesce(tokens_output, 0) + coalesce(tokens_reasoning, 0) as tokens,
-                           coalesce(cost, 0)                                          as cost
-                    from messages where session_id = ?
-                ) where role = 'assistant' order by minutes
-            """, ids, names)
-            if len(progress):
-                progress["tokens"] = progress.groupby("conversation").tokens.cumsum()
-                progress["cost"] = progress.groupby("conversation").cost.cumsum()
-                left, right = st.columns(2)
-                with left:
-                    st.markdown("#### Tokens générés cumulés")
-                    fig = px.line(progress, x="minutes", y="tokens", color="conversation", color_discrete_map=colors,
-                                  labels={"minutes": "Minutes depuis le début", "tokens": "Tokens", "conversation": ""})
-                    fig.update_layout(legend=dict(orientation="h", y=1.15))
-                    chart(fig, "compare_tokens")
-                with right:
-                    st.markdown("#### Coût cumulé")
-                    fig = px.line(progress, x="minutes", y="cost", color="conversation", color_discrete_map=colors,
-                                  labels={"minutes": "Minutes depuis le début", "cost": "Coût ($)", "conversation": ""})
-                    fig.update_layout(legend=dict(orientation="h", y=1.15))
-                    chart(fig, "compare_cost")
-
-            context = pd.concat([
-                context_series(compare_connection, sid).assign(conversation=name) for sid, name in zip(ids, names)
-            ], ignore_index=True)
-            if len(context) and context.context.max() > 0:
-                st.markdown("#### Taille du contexte à chaque appel")
-                fig = px.line(context, x="call", y="context", color="conversation", color_discrete_map=colors,
-                              hover_data={"cache_share": ":.0%"},
-                              labels={"call": "Appel n° (agent principal)", "context": "Tokens de contexte",
-                                      "cache_share": "Part en cache", "conversation": ""})
-                fig.update_layout(legend=dict(orientation="h", y=1.15))
-                chart(fig, "compare_context")
-                st.caption("Une chute marque une compaction ou un nouveau contexte. "
-                           "Les conversations publiées avant l'ajout du cache par message n'affichent pas de courbe : "
-                           "republiez-les avec `--full`.")
-
-            turns = pd.concat([
-                turn_durations(compare_connection, sid).rename("seconds").reset_index().assign(conversation=name)
-                for sid, name in zip(ids, names)
-            ], ignore_index=True)
-            if len(turns):
-                st.markdown("#### Durée de chaque tour")
-                fig = px.bar(turns, x="turn", y="seconds", color="conversation", barmode="group",
-                             color_discrete_map=colors,
-                             labels={"turn": "Tour (prompt n°)", "seconds": "Durée (s)", "conversation": ""})
-                fig.update_layout(legend=dict(orientation="h", y=1.15))
-                chart(fig, "compare_turns")
-
+        progress = compare_frame(compare_connection, """
+            select minutes, tokens, cost from (
+                select role,
+                       epoch(created_at - min(created_at) over ()) / 60          as minutes,
+                       coalesce(tokens_output, 0) + coalesce(tokens_reasoning, 0) as tokens,
+                       coalesce(cost, 0)                                          as cost
+                from messages where session_id = ?
+            ) where role = 'assistant' order by minutes
+        """, ids, names)
+        if len(progress):
+            progress["tokens"] = progress.groupby("conversation").tokens.cumsum()
+            progress["cost"] = progress.groupby("conversation").cost.cumsum()
             left, right = st.columns(2)
             with left:
-                st.markdown("#### Outils utilisés")
-                tool_use = compare_frame(compare_connection, """
-                    select tool, count(*) as calls,
-                           sum(case when status = 'error' then 1 else 0 end) as errors,
-                           coalesce(sum(length(output)), 0) as output_chars
-                    from tools where session_id = ? group by tool
-                """, ids, names)
-                if len(tool_use):
-                    fig = px.bar(tool_use, y="tool", x="calls", color="conversation", barmode="group",
-                                 orientation="h", color_discrete_map=colors, hover_data=["errors", "output_chars"],
-                                 labels={"tool": "", "calls": "Appels", "errors": "Erreurs",
-                                         "output_chars": "Caractères renvoyés", "conversation": ""})
-                    fig.update_layout(legend=dict(orientation="h", y=1.15), yaxis=dict(categoryorder="total ascending"))
-                    chart(fig, "compare_tools")
-                else:
-                    st.caption("Aucun appel outil.")
+                st.markdown("#### Tokens générés cumulés")
+                fig = px.line(progress, x="minutes", y="tokens", color="conversation", color_discrete_map=colors,
+                              labels={"minutes": "Minutes depuis le début", "tokens": "Tokens", "conversation": ""})
+                fig.update_layout(legend=dict(orientation="h", y=1.15))
+                chart(fig, "compare_tokens")
             with right:
-                st.markdown("#### Répartition des parties")
-                part_mix = compare_frame(compare_connection, """
-                    select type, count(*) as count from parts where session_id = ? group by type
-                """, ids, names)
-                if len(part_mix):
-                    fig = px.bar(part_mix, x="type", y="count", color="conversation", barmode="group",
-                                 color_discrete_map=colors, labels={"type": "", "count": "Parties", "conversation": ""})
-                    fig.update_layout(legend=dict(orientation="h", y=1.15))
-                    chart(fig, "compare_parts")
+                st.markdown("#### Coût cumulé")
+                fig = px.line(progress, x="minutes", y="cost", color="conversation", color_discrete_map=colors,
+                              labels={"minutes": "Minutes depuis le début", "cost": "Coût ($)", "conversation": ""})
+                fig.update_layout(legend=dict(orientation="h", y=1.15))
+                chart(fig, "compare_cost")
 
-            if st.toggle("Afficher les deux transcripts", key="compare_transcripts"):
-                for transcript_tab, sid in zip(st.tabs(names), ids):
-                    with transcript_tab:
-                        st.subheader(candidates.loc[sid, "title"])
-                        render_transcript(compare_connection, compare_connection.execute(
-                            "select * from messages where session_id = ? order by created_at", [sid]
-                        ).df())
+        context = pd.concat([
+            context_series(compare_connection, sid).assign(conversation=name) for sid, name in zip(ids, names)
+        ], ignore_index=True)
+        if len(context) and context.context.max() > 0:
+            st.markdown("#### Taille du contexte à chaque appel")
+            fig = px.line(context, x="call", y="context", color="conversation", color_discrete_map=colors,
+                          hover_data={"cache_share": ":.0%"},
+                          labels={"call": "Appel n° (agent principal)", "context": "Tokens de contexte",
+                                  "cache_share": "Part en cache", "conversation": ""})
+            fig.update_layout(legend=dict(orientation="h", y=1.15))
+            chart(fig, "compare_context")
+            st.caption("Une chute marque une compaction ou un nouveau contexte. "
+                       "Les conversations publiées avant l'ajout du cache par message n'affichent pas de courbe : "
+                       "republiez-les avec `--full`.")
+
+        turns = pd.concat([
+            turn_durations(compare_connection, sid).rename("seconds").reset_index().assign(conversation=name)
+            for sid, name in zip(ids, names)
+        ], ignore_index=True)
+        if len(turns):
+            st.markdown("#### Durée de chaque tour")
+            fig = px.bar(turns, x="turn", y="seconds", color="conversation", barmode="group",
+                         color_discrete_map=colors,
+                         labels={"turn": "Tour (prompt n°)", "seconds": "Durée (s)", "conversation": ""})
+            fig.update_layout(legend=dict(orientation="h", y=1.15))
+            chart(fig, "compare_turns")
+
+        left, right = st.columns(2)
+        with left:
+            st.markdown("#### Outils utilisés")
+            tool_use = compare_frame(compare_connection, """
+                select tool, count(*) as calls,
+                       sum(case when status = 'error' then 1 else 0 end) as errors,
+                       coalesce(sum(length(output)), 0) as output_chars
+                from tools where session_id = ? group by tool
+            """, ids, names)
+            if len(tool_use):
+                fig = px.bar(tool_use, y="tool", x="calls", color="conversation", barmode="group",
+                             orientation="h", color_discrete_map=colors, hover_data=["errors", "output_chars"],
+                             labels={"tool": "", "calls": "Appels", "errors": "Erreurs",
+                                     "output_chars": "Caractères renvoyés", "conversation": ""})
+                fig.update_layout(legend=dict(orientation="h", y=1.15), yaxis=dict(categoryorder="total ascending"))
+                chart(fig, "compare_tools")
+            else:
+                st.caption("Aucun appel outil.")
+        with right:
+            st.markdown("#### Répartition des parties")
+            part_mix = compare_frame(compare_connection, """
+                select type, count(*) as count from parts where session_id = ? group by type
+            """, ids, names)
+            if len(part_mix):
+                fig = px.bar(part_mix, x="type", y="count", color="conversation", barmode="group",
+                             color_discrete_map=colors, labels={"type": "", "count": "Parties", "conversation": ""})
+                fig.update_layout(legend=dict(orientation="h", y=1.15))
+                chart(fig, "compare_parts")
+
+        if st.toggle("Afficher les deux transcripts", key="compare_transcripts"):
+            for transcript_tab, sid in zip(st.tabs(names), ids):
+                with transcript_tab:
+                    st.subheader(candidates.loc[sid, "title"])
+                    render_transcript(compare_connection, compare_connection.execute(
+                        "select * from messages where session_id = ? order by created_at", [sid]
+                    ).df())
 
 with raw_tab:
     st.dataframe(
