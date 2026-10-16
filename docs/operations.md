@@ -15,6 +15,14 @@ L'onglet **Comparer** ignore le filtre Source, pour pouvoir opposer un même
 modèle dans OpenCode et dans Claude Code, ou deux modèles dans le même outil. Il
 met côte à côte durée, temps par tour, prompts, tokens, contexte et cache, coût,
 appels et erreurs d'outils, puis désigne la meilleure valeur de chaque critère.
+La taille du contexte à chaque appel de l'agent principal (entrée + cache lu +
+cache écrit) donne le pic, la moyenne et les compactions (chute d'au moins
+30 % d'un appel à l'autre) ; les outils sont comparés par appels répétés à
+l'identique et par volume de sortie renvoyé. Ces courbes demandent les colonnes
+`tokens_cache_read` / `tokens_cache_write` de `messages` : le sink les ajoute à
+la table existante, mais les conversations déjà publiées doivent l'être de
+nouveau (`node plugins/claude/observatory.js --full`, et pour OpenCode
+supprimer `data/state/producer-state.json` avant de relancer le producteur).
 Ce verdict n'a de sens qu'à tâche égale (même prompt, même dépôt) ; les coûts
 Claude Code sont estimés et leurs tokens générés incluent la réflexion.
 

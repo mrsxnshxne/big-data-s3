@@ -174,6 +174,7 @@ export function parseSession(files) {
         out.messages.push({
           message_id: entry.uuid, session_id: entry.sessionId, role: "user", agent, model: "",
           finish: "", cost: 0, tokens_input: 0, tokens_output: 0, tokens_reasoning: 0,
+          tokens_cache_read: 0, tokens_cache_write: 0,
           created_at: time, updated_at: time,
         });
         prompt.forEach((block, index) => {
@@ -201,8 +202,8 @@ export function parseSession(files) {
         tokens_output: usage.output_tokens ?? 0,
         // output_tokens already includes thinking: do not count it twice.
         tokens_reasoning: 0,
-        cache_read: usage.cache_read_input_tokens ?? 0,
-        cache_write: usage.cache_creation_input_tokens ?? 0,
+        tokens_cache_read: usage.cache_read_input_tokens ?? 0,
+        tokens_cache_write: usage.cache_creation_input_tokens ?? 0,
         updated_at: time,
       });
       messages.set(id, message);
@@ -230,13 +231,13 @@ export function parseSession(files) {
 
   let cost = 0;
   const tokens = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
-  for (const { blocks, cache_read, cache_write, ...message } of messages.values()) {
+  for (const { blocks, ...message } of messages.values()) {
     out.messages.push(message);
     cost += message.cost;
     tokens.input += message.tokens_input;
     tokens.output += message.tokens_output;
-    tokens.cache_read += cache_read;
-    tokens.cache_write += cache_write;
+    tokens.cache_read += message.tokens_cache_read;
+    tokens.cache_write += message.tokens_cache_write;
   }
   out.tools.push(...tools.values());
   out.sessions.push({

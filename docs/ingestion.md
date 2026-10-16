@@ -38,7 +38,7 @@ servent donc de **déclencheur**, et SQLite de **source**.
 | Dataset / topic | Contenu principal |
 | --- | --- |
 | `sessions` | Identité, titre, répertoire, agent, modèle, fournisseur, coût, tokens, `created_at`, `updated_at` |
-| `messages` | Rôle, modèle, statut de fin, coût, tokens, `created_at`, `updated_at` |
+| `messages` | Rôle, modèle, statut de fin, coût, tokens dont lecture et écriture du cache de l'appel, `created_at`, `updated_at` |
 | `parts` | Parties textuelles, raisonnement ou outil d'un message |
 | `tools` | Nom de l'outil, appel, statut, entrée, sortie et horodatages |
 

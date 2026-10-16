@@ -146,6 +146,7 @@ export async function extract(database, watermarks) {
         finish: data.finish ?? "", cost: data.cost || 0,
         tokens_input: tokens.input || 0, tokens_output: tokens.output || 0,
         tokens_reasoning: tokens.reasoning || 0,
+        tokens_cache_read: obj(tokens.cache).read || 0, tokens_cache_write: obj(tokens.cache).write || 0,
         created_at: micros(row.time_created), updated_at: micros(updated), source: "opencode", _watermark: updated,
       });
     }

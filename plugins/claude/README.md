@@ -24,7 +24,7 @@ réponse terminée ─▶ hook Stop ─▶ observatory.js ─▶ Schema Registry
    | Dataset | Contenu |
    | --- | --- |
    | `sessions` | titre (`ai-title`, sinon premier prompt), `cwd`, dernier modèle, totaux de tokens dont le cache, coût estimé |
-   | `messages` | prompts utilisateur et réponses (une réponse s'étale sur plusieurs lignes JSONL partageant `message.id`) ; `agent` vaut `main` ou `subagent:<id>` |
+   | `messages` | prompts utilisateur et réponses (une réponse s'étale sur plusieurs lignes JSONL partageant `message.id`), avec lecture et écriture du cache de chaque appel ; `agent` vaut `main` ou `subagent:<id>` |
    | `parts` | blocs `text`, `thinking` (→ `reasoning`) et `tool_use` (→ `tool`) |
    | `tools` | appel d'outil, complété par son `tool_result` : sortie, statut `completed` / `error` (ou `running` sans résultat) |
 

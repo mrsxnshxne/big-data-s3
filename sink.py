@@ -53,6 +53,7 @@ ARROW_SCHEMAS: dict[str, pa.Schema] = {
         pa.field("cost", pa.float64()),
         pa.field("tokens_input", pa.int64()), pa.field("tokens_output", pa.int64()),
         pa.field("tokens_reasoning", pa.int64()),
+        pa.field("tokens_cache_read", pa.int64()), pa.field("tokens_cache_write", pa.int64()),
         pa.field("created_at", TS), pa.field("updated_at", TS),
         pa.field("source", pa.string()),
     ]),

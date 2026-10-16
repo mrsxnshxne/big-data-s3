@@ -277,12 +277,18 @@ COMPARE_METRICS = (
     ("tokens_per_prompt", "🔤 Tokens générés / prompt", "low", fmt_count),
     ("context", "📥 Tokens de contexte (entrée + cache)", "low", fmt_count),
     ("cache_ratio", "♻️ Part du contexte lue en cache", "high", fmt_pct),
+    ("peak_context", "📈 Pic de contexte (un appel)", "low", fmt_count),
+    ("mean_context", "📊 Contexte moyen par appel", "low", fmt_count),
+    ("compactions", "🗜️ Compactions (chute du contexte ≥ 30 %)", None, fmt_count),
     ("cost", "💰 Coût", "low", fmt_dollars),
     ("cost_per_prompt", "💰 Coût / prompt", "low", fmt_dollars),
     ("tool_calls", "🔧 Appels outils", None, fmt_count),
     ("tool_errors", "❌ Erreurs outils", "low", fmt_count),
     ("error_rate", "❌ Taux d'erreur outils", "low", fmt_pct),
     ("distinct_tools", "🧰 Outils distincts", None, fmt_count),
+    ("tool_calls_per_prompt", "🔧 Appels outils / prompt", "low", fmt_count),
+    ("repeated_calls", "🔁 Appels outils identiques répétés", "low", fmt_count),
+    ("tool_output_chars", "📦 Caractères renvoyés par les outils", "low", fmt_count),
 )
 
 
@@ -297,6 +303,22 @@ def turn_durations(con: duckdb.DuckDBPyConnection, session_id: str) -> pd.Series
     messages["turn"] = prompt.cumsum()
     turns = messages[messages.turn > 0].groupby("turn").agg(start=("created_at", "min"), end=("updated_at", "max"))
     return (turns.end - turns.start).dt.total_seconds()
+
+
+def context_series(con: duckdb.DuckDBPyConnection, session_id: str) -> pd.DataFrame:
+    """Prompt size of each model call of the main agent: fresh input plus cache reads and writes."""
+    series = con.execute("""
+        select created_at,
+               coalesce(tokens_input, 0) + coalesce(tokens_cache_read, 0)
+                 + coalesce(tokens_cache_write, 0)                  as context,
+               coalesce(tokens_cache_read, 0)                       as cache_read
+        from messages
+        where session_id = ? and role = 'assistant' and coalesce(agent, '') not like 'subagent:%'
+        order by created_at
+    """, [session_id]).df()
+    series.insert(0, "call", range(1, len(series) + 1))
+    series["cache_share"] = (series.cache_read / series.context).where(series.context > 0)
+    return series
 
 
 def session_profile(con: duckdb.DuckDBPyConnection, session_id: str) -> dict:
@@ -317,6 +339,10 @@ def session_profile(con: duckdb.DuckDBPyConnection, session_id: str) -> dict:
                  where t.session_id = s.session_id and t.status = 'error')     as tool_errors,
                (select count(distinct tool) from tools t
                  where t.session_id = s.session_id)                            as distinct_tools,
+               (select count(*) - count(distinct (tool, input)) from tools t
+                 where t.session_id = s.session_id)                            as repeated_calls,
+               (select coalesce(sum(length(output)), 0) from tools t
+                 where t.session_id = s.session_id)                            as tool_output_chars,
                (select epoch(max(coalesce(m.updated_at, m.created_at)) - min(m.created_at))
                   from messages m where m.session_id = s.session_id)           as duration_s
         from sessions s where s.session_id = ?
@@ -327,6 +353,13 @@ def session_profile(con: duckdb.DuckDBPyConnection, session_id: str) -> dict:
     profile["tokens_per_prompt"] = profile["tokens_generated"] / prompts if prompts else None
     profile["cost_per_prompt"] = profile["cost"] / prompts if prompts else None
     profile["cache_ratio"] = profile["cache_read"] / profile["context"] if profile["context"] else None
+    context = context_series(con, session_id)
+    # Rows published before per-message cache counts have none: context then only holds fresh input.
+    has_context = len(context) and context.context.max() > 0
+    profile["peak_context"] = context.context.max() if has_context else None
+    profile["mean_context"] = context.context.mean() if has_context else None
+    profile["compactions"] = int((context.context < context.context.shift() * 0.7).sum()) if has_context else None
+    profile["tool_calls_per_prompt"] = profile["tool_calls"] / prompts if prompts else None
     profile["error_rate"] = profile["tool_errors"] / profile["tool_calls"] if profile["tool_calls"] else None
     return profile
 
@@ -660,6 +693,21 @@ with compare_tab:
                     fig.update_layout(legend=dict(orientation="h", y=1.15))
                     chart(fig, "compare_cost")
 
+            context = pd.concat([
+                context_series(compare_connection, sid).assign(conversation=name) for sid, name in zip(ids, names)
+            ], ignore_index=True)
+            if len(context) and context.context.max() > 0:
+                st.markdown("#### Taille du contexte à chaque appel")
+                fig = px.line(context, x="call", y="context", color="conversation", color_discrete_map=colors,
+                              hover_data={"cache_share": ":.0%"},
+                              labels={"call": "Appel n° (agent principal)", "context": "Tokens de contexte",
+                                      "cache_share": "Part en cache", "conversation": ""})
+                fig.update_layout(legend=dict(orientation="h", y=1.15))
+                chart(fig, "compare_context")
+                st.caption("Une chute marque une compaction ou un nouveau contexte. "
+                           "Les conversations publiées avant l'ajout du cache par message n'affichent pas de courbe : "
+                           "republiez-les avec `--full`.")
+
             turns = pd.concat([
                 turn_durations(compare_connection, sid).rename("seconds").reset_index().assign(conversation=name)
                 for sid, name in zip(ids, names)
@@ -677,13 +725,15 @@ with compare_tab:
                 st.markdown("#### Outils utilisés")
                 tool_use = compare_frame(compare_connection, """
                     select tool, count(*) as calls,
-                           sum(case when status = 'error' then 1 else 0 end) as errors
+                           sum(case when status = 'error' then 1 else 0 end) as errors,
+                           coalesce(sum(length(output)), 0) as output_chars
                     from tools where session_id = ? group by tool
                 """, ids, names)
                 if len(tool_use):
                     fig = px.bar(tool_use, y="tool", x="calls", color="conversation", barmode="group",
-                                 orientation="h", color_discrete_map=colors, hover_data=["errors"],
-                                 labels={"tool": "", "calls": "Appels", "errors": "Erreurs", "conversation": ""})
+                                 orientation="h", color_discrete_map=colors, hover_data=["errors", "output_chars"],
+                                 labels={"tool": "", "calls": "Appels", "errors": "Erreurs",
+                                         "output_chars": "Caractères renvoyés", "conversation": ""})
                     fig.update_layout(legend=dict(orientation="h", y=1.15), yaxis=dict(categoryorder="total ascending"))
                     chart(fig, "compare_tools")
                 else:
