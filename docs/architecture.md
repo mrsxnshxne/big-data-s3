@@ -2,31 +2,43 @@
 
 ## Flux principal
 
-```text
-~/.local/share/opencode/opencode.db
-        |
-        v
-  plugin OpenCode observatory.js (fin de réponse + démarrage,
-        |      watermark incrémental, encodage Avro)
-        |
-        v  HTTP Proxy
-  Redpanda : topics opencode.sessions/messages/parts/tools (Avro)
-        |     Schema Registry : un schéma par topic (schemas/*.avsc)
-        |
-        v
-  sink.py (consommateur, décodage Avro, batch, append Iceberg)
-        |
-        v
-  Iceberg REST + warehouse sur RustFS/S3 (namespace `analytics`)
-        |
-        +--> DuckDB (déduplication par id) + Streamlit
-        |
-        +--> Spark (sessions, messages, tools dédupliqués)
-                 --> agrégats daily_activity, session_summary,
-                     tool_usage et model_usage
+```mermaid
+flowchart TD
+    OC["~/.local/share/opencode/opencode.db"]
+    CC["~/.claude/projects/*.jsonl"]
+    PO["Plugin OpenCode<br/>observatory.js<br/>(fin de réponse + démarrage)"]
+    PC["Producteur Claude Code<br/>(hook Stop)"]
+
+    OC --> PO
+    CC --> PC
+
+    PO -- "HTTP Proxy :8082" --> RP
+    PC -- "HTTP Proxy :8082" --> RP
+
+    subgraph RP["Redpanda"]
+        direction LR
+        T1["opencode.sessions / messages / parts / tools<br/>(Avro)"]
+        T2["live.events / live.activity<br/>(JSON plat)"]
+    end
+
+    SR["Schema Registry :8081<br/>un schéma par topic (schemas/*.avsc)"]
+    SR -. "contrat Avro" .- T1
+
+    T1 --> SINK["sink.py<br/>décodage Avro, batch, append Iceberg"]
+    T1 --> ARROYO["Arroyo 0.15<br/>arroyo/live.sql"]
+    ARROYO --> T2
+    T2 --> LIVE["live/server.py<br/>pont SSE :8600"]
+    LIVE --> PANEL["Panel HTML/JS<br/>live/static/index.html"]
+
+    SINK --> ICE["Iceberg REST :8181<br/>warehouse RustFS/S3 (namespace analytics)"]
+    ICE --> DASH["Dashboard Streamlit :8501<br/>DuckDB (déduplication par id)"]
+    ICE --> SPARK["Spark<br/>sessions, messages, tools dédupliqués"]
+    SPARK --> AGG["daily_activity, session_summary,<br/>tool_usage, model_usage"]
 ```
 
 Spark ne lit pas la table `parts`. Le dashboard, lui, charge les quatre tables.
+Le chemin temps réel (Arroyo → `live.*` → panel) est détaillé dans
+[realtime.md](realtime.md).
 
 ## Pourquoi cette forme
 
@@ -44,18 +56,23 @@ Spark ne lit pas la table `parts`. Le dashboard, lui, charge les quatre tables.
 
 ## Services Docker
 
-`docker-compose.yml` définit huit services :
+`docker-compose.yml` définit onze services :
 
 - `redpanda` expose le protocole Kafka sur `localhost:9092` (hôte) et
   `redpanda:29092` (réseau Compose), son Schema Registry sur
   `localhost:8081` / `redpanda:8081` et son HTTP Proxy sur `localhost:8082`.
-- `redpanda-topics` crée les quatre topics au démarrage puis s'arrête.
+- `redpanda-topics` crée les quatre topics `opencode.*` et les deux topics
+  `live.*` au démarrage puis s'arrête.
 - `rustfs` expose l'API S3 sur `localhost:9000` et sa console sur
   `localhost:9001`.
 - `iceberg-rest` expose le catalogue Iceberg sur `localhost:8181` et utilise
   RustFS comme warehouse. Son catalogue SQLite est persisté dans le volume
   `iceberg-catalog`.
 - `sink` consomme les topics et alimente Iceberg en continu.
+- `arroyo` (moteur de streaming, UI sur `localhost:5115`) fait tourner les
+  pipelines temps réel ; ses données sont dans le volume `arroyo-data`.
+- `arroyo-deploy` est un one-shot qui enregistre les `arroyo/*.sql`.
+- `live` est le pont SSE et le panel, sur `localhost:8600`.
 - `dashboard` est activé par le profil Docker `dashboard` et écoute sur
   `localhost:8501`.
 - `spark` est activé par le profil `spark` et exécute `spark/analytics.py`.
@@ -63,9 +80,37 @@ Spark ne lit pas la table `parts`. Le dashboard, lui, charge les quatre tables.
   avec l'API S3 de RustFS.
 
 Les volumes Docker persistent les objets RustFS (`rustfs-data`), les logs
-Redpanda et le Schema Registry (`redpanda-data`) et le catalogue Iceberg
-(`iceberg-catalog`). Les ports sont liés à `127.0.0.1` par défaut afin
-de ne pas publier les services sur le réseau local.
+Redpanda et le Schema Registry (`redpanda-data`), le catalogue Iceberg
+(`iceberg-catalog`) et l'état d'Arroyo (`arroyo-data`). Les ports sont liés à
+`127.0.0.1` par défaut afin de ne pas publier les services sur le réseau local.
+
+```mermaid
+flowchart LR
+    subgraph Profils
+        direction TB
+        P1["profil dashboard"]
+        P2["profil spark"]
+        P3["profil tools"]
+    end
+
+    subgraph Pipeline
+        direction LR
+        redpanda --> redpanda-topics
+        redpanda --> sink
+        rustfs --> iceberg-rest
+        iceberg-rest --> sink
+        redpanda --> arroyo
+        arroyo --> arroyo-deploy
+        arroyo --> live
+        redpanda --> live
+    end
+
+    dashboard -.-> iceberg-rest
+    spark -.-> iceberg-rest
+    P1 -.- dashboard
+    P2 -.- spark
+    P3 -.- aws-cli
+```
 
 ## Modes de lecture du dashboard
 

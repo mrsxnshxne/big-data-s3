@@ -30,7 +30,8 @@ STATIC = Path(__file__).resolve().parent / "static"
 EVENTS_TOPIC = os.getenv("LIVE_EVENTS_TOPIC", "live.events")
 ACTIVITY_TOPIC = os.getenv("LIVE_ACTIVITY_TOPIC", "live.activity")
 RECENT_EVENTS = 200
-ACTIVITY_WINDOWS = 360  # 10 s windows: one hour
+ACTIVITY_WINDOWS = 8640  # 10 s windows: one day
+ACTIVITY_RAW_WINDOWS = 360  # the last hour is sent as is, older windows are rolled up per minute
 TOP_SESSIONS = 40
 ACTIVE_SESSION_SECONDS = 300
 # Arroyo replays the whole history into live.events when a pipeline is (re)deployed: only recent
@@ -138,6 +139,22 @@ class Hub:
 
     # ------------------------------------------------------------ views
 
+    def activity_view(self) -> list[dict]:
+        keys = sorted(self.activity)
+        old, recent = keys[:-ACTIVITY_RAW_WINDOWS], keys[-ACTIVITY_RAW_WINDOWS:]
+        minutes: dict[str, dict] = {}
+        for key in old:
+            window = self.activity[key]
+            bucket = minutes.setdefault(key[:16], {"window_start": key[:16] + ":00", "models": {}})
+            for model, values in window["models"].items():
+                acc = bucket["models"].setdefault(model, dict.fromkeys(values, 0))
+                for field, value in values.items():
+                    acc[field] += value
+        for bucket in minutes.values():
+            for field in ("messages", "cost", "tokens_input", "tokens_output"):
+                bucket[field] = sum(m[field] for m in bucket["models"].values())
+        return [*minutes.values(), *(self.activity[k] for k in recent)]
+
     def session_rows(self) -> list[dict]:
         rows = []
         for sid, counter in self.by_session.items():
@@ -168,7 +185,7 @@ class Hub:
             "tools": {t: {"calls": n, "errors": self.by_tool_errors[t]} for t, n in self.by_tool.most_common(15)},
             "status": {k: v for k, v in self.by_status.items() if v > 0},
             "sessions": self.session_rows(),
-            "activity": [self.activity[k] for k in sorted(self.activity)],
+            "activity": self.activity_view(),
             "last_event_at": self.last_event_at,
         }
 

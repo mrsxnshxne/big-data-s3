@@ -170,6 +170,8 @@
           <div class="seg" role="group" aria-label="Période">
             <button type="button" data-range="15" aria-pressed="true">15 min</button>
             <button type="button" data-range="60" aria-pressed="false">1 h</button>
+            <button type="button" data-range="180" aria-pressed="false">3 h</button>
+            <button type="button" data-range="1440" aria-pressed="false">1 j</button>
           </div>
           <div class="seg" role="group" aria-label="Affichage">
             <button type="button" data-view="chart" aria-pressed="true">Graphique</button>
@@ -364,7 +366,7 @@ function niceMax(v) {
 }
 
 function buckets() {
-  const size = state.range === 15 ? 10000 : 60000, n = state.range * 60000 / size;
+  const size = state.range === 15 ? 10000 : state.range === 60 ? 60000 : state.range === 180 ? 300000 : 900000, n = state.range * 60000 / size;
   const end = Math.floor(Date.now() / size) * size, start = end - (n - 1) * size;
   const list = Array.from({ length: n }, (_, i) => ({ t: start + i * size, size, by: {} }));
   for (const w of state.stats.activity) {
@@ -449,7 +451,7 @@ function renderChart() {
   });
   g.push(s("g", { id: "hl" }));
   svg.replaceChildren(...g);
-  svg.setAttribute("aria-label", metricLabel[state.metric] + " par modèle sur " + state.range + " minutes, total " + f(totals.reduce((a, b) => a + b, 0)));
+  svg.setAttribute("aria-label", metricLabel[state.metric] + " par modèle sur " + (state.range >= 60 ? state.range / 60 + " h" : state.range + " min") + ", total " + f(totals.reduce((a, b) => a + b, 0)));
   if (!totals.some((t) => t > 0)) {
     const t = s("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }); t.textContent = "Aucune activité sur cette période";
     svg.append(t);

@@ -4,21 +4,43 @@ Le chemin « historique » (`sink.py` → Iceberg → Streamlit) fonctionne par 
 quelques secondes pour l'écriture, 30 s de cache côté dashboard et un
 rechargement manuel. Le chemin temps réel est parallèle et ne passe pas par S3.
 
-```text
-Redpanda opencode.* (Avro)
-   |
-   +--> sink.py ------> Iceberg / RustFS (historique, inchangé)
-   |
-   +--> Arroyo (arroyo/live.sql)
-           |  JSON plat, sans prompt ni sortie d'outil
-           v
-        Redpanda live.events / live.activity
-           |
-           v
-        live/server.py  (FastAPI, consommateur Kafka)
-           |  Server-Sent Events  /stream
-           v
-        panel HTML/JS  live/static/index.html   http://localhost:8600
+```mermaid
+flowchart LR
+    RP1["Redpanda opencode.* (Avro)"]
+    RP1 --> SINK["sink.py"]
+    SINK --> ICE["Iceberg / RustFS<br/>(historique, inchangé)"]
+
+    RP1 --> ARROYO["Arroyo<br/>arroyo/live.sql"]
+    ARROYO -- "JSON plat, sans prompt ni sortie d'outil" --> RP2["Redpanda live.events / live.activity"]
+    RP2 --> LIVE["live/server.py<br/>FastAPI, consommateur Kafka"]
+    LIVE -- "Server-Sent Events /stream" --> PANEL["Panel HTML/JS<br/>live/static/index.html<br/>http://localhost:8600"]
+```
+
+Le même diagramme en séquence, pour une réponse d'agent et une connexion du
+navigateur :
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as Plugin (OpenCode / Claude Code)
+    participant RP as Redpanda
+    participant AR as Arroyo
+    participant LS as live/server.py
+    participant UI as Panel navigateur
+
+    UI->>LS: GET /stream
+    LS-->>UI: snapshot (totaux, derniers événements, titres)
+    Note over LS,RP: Au démarrage, LS a rejoué live.* depuis le début pour reconstruire les totaux
+
+    Agent->>RP: fin de réponse → opencode.messages / tools / sessions
+    RP->>AR: consommation des topics opencode.*
+    AR->>RP: live.events (une ligne par événement)
+    AR->>RP: live.activity (fenêtres de 10 s par modèle)
+    RP->>LS: nouveaux événements live.*
+    LS-->>UI: event (message ou appel d'outil)
+    LS-->>UI: session (titre changé)
+    LS-->>UI: stats (au plus 1 par seconde)
+    Note over LS,UI: sans changement : ": keepalive" chaque seconde
 ```
 
 Les deux chemins lisent les mêmes topics avec des groupes de consommateurs
@@ -31,7 +53,7 @@ distincts : ajouter le temps réel ne modifie ni le producteur ni les tables.
 | `arroyo/live.sql` | Pipeline Arroyo : lit `opencode.messages/tools/sessions` (Avro + Schema Registry), écrit `live.events` (un événement plat par ligne) et `live.activity` (fenêtres de 10 s par modèle) |
 | `arroyo/deploy.py` | Enregistre chaque `arroyo/*.sql` comme pipeline via l'API REST d'Arroyo ; `--replace` redéploie |
 | `live/server.py` | Pont SSE : rejoue `live.*` depuis le début pour reconstruire les totaux, puis suit les nouveaux événements |
-| `live/static/index.html` | Panel sans dépendance : totaux, graphique empilé par modèle (réponses / coût / tokens, 15 min ou 1 h, vue tableau), sessions triables et cliquables, outils avec erreurs, agents, flux filtrable (type, texte, session, pause), thème clair/sombre |
+| `live/static/index.html` | Panel sans dépendance : totaux, graphique empilé par modèle (réponses / coût / tokens, 15 min, 1 h, 3 h ou 1 j, vue tableau), sessions triables et cliquables, outils avec erreurs, agents, flux filtrable (type, texte, session, pause), thème clair/sombre |
 
 Services Compose : `arroyo` (moteur, UI sur <http://localhost:5115>),
 `arroyo-deploy` (one-shot qui déploie les pipelines) et `live` (pont + panel).
@@ -43,7 +65,7 @@ Services Compose : `arroyo` (moteur, UI sur <http://localhost:5115>),
 - `snapshot` à la connexion : totaux, derniers événements, titres de sessions ;
 - `event` pour chaque message ou appel d'outil récent ;
 - `session` quand un titre de session change ;
-- `stats` au plus une fois par seconde quand quelque chose a changé : totaux, `models`, `agents`, `tools` (appels et erreurs), `status`, `sessions` (40 plus récentes, avec coût, outils, cache) et `activity` (fenêtres de 10 s sur 1 h, ventilées par modèle).
+- `stats` au plus une fois par seconde quand quelque chose a changé : totaux, `models`, `agents`, `tools` (appels et erreurs), `status`, `sessions` (40 plus récentes, avec coût, outils, cache) et `activity` (fenêtres de 10 s sur la dernière heure, cumulées par minute jusqu'à 1 j, ventilées par modèle).
 
 Un commentaire `: keepalive` part chaque seconde sans changement. `EventSource`
 se reconnecte seul et reçoit un nouveau `snapshot`.
