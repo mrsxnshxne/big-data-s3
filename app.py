@@ -36,6 +36,13 @@ ICEBERG_CATALOG_URI = os.getenv("ICEBERG_CATALOG_URI", "http://localhost:8181")
 ICEBERG_NAMESPACE = os.getenv("ICEBERG_NAMESPACE", "analytics")
 TABLES = ("sessions", "messages", "parts", "tools")
 PRIMARY_KEYS = {"sessions": "session_id", "messages": "message_id", "parts": "part_id", "tools": "part_id"}
+CACHE_COLUMNS = {"tokens_cache_read": pa.int64(), "tokens_cache_write": pa.int64()}
+LATE_COLUMNS = {
+    "sessions": {"source": pa.string(), **CACHE_COLUMNS},
+    "messages": {"source": pa.string(), **CACHE_COLUMNS},
+    "parts": {"source": pa.string()},
+    "tools": {"source": pa.string()},
+}
 # Rows written before the source column existed come from OpenCode.
 SOURCES = {"opencode": "◌ OpenCode", "claude-code": "✳ Claude Code"}
 DEFAULT_SOURCE = "opencode"
@@ -88,8 +95,10 @@ def load_tables(catalog_uri: str) -> dict[str, pa.Table]:
             table = catalog.load_table(f"{ICEBERG_NAMESPACE}.{name}").scan().to_arrow()
         except Exception:
             continue
-        if "source" not in table.schema.names:
-            table = table.append_column("source", pa.nulls(len(table), pa.string()))
+        # Tables written before a column was added (source, cache counts) lack it until the sink evolves them.
+        for column, kind in LATE_COLUMNS.get(name, {}).items():
+            if column not in table.schema.names:
+                table = table.append_column(column, pa.nulls(len(table), kind))
         tables[name] = table
     return tables
 
