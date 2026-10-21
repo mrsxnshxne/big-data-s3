@@ -30,7 +30,8 @@ STATIC = Path(__file__).resolve().parent / "static"
 EVENTS_TOPIC = os.getenv("LIVE_EVENTS_TOPIC", "live.events")
 ACTIVITY_TOPIC = os.getenv("LIVE_ACTIVITY_TOPIC", "live.activity")
 RECENT_EVENTS = 200
-ACTIVITY_WINDOWS = 90
+ACTIVITY_WINDOWS = 360  # 10 s windows: one hour
+TOP_SESSIONS = 40
 ACTIVE_SESSION_SECONDS = 300
 # Arroyo replays the whole history into live.events when a pipeline is (re)deployed: only recent
 # events are animated in the panel, older ones just feed the totals.
@@ -59,6 +60,11 @@ class Hub:
         self.recent: deque[dict] = deque(maxlen=RECENT_EVENTS)
         self.by_model: dict[str, Counter] = defaultdict(Counter)
         self.by_tool: Counter = Counter()
+        self.by_tool_errors: Counter = Counter()
+        self.by_status: Counter = Counter()
+        self.by_agent: dict[str, Counter] = defaultdict(Counter)
+        self.by_session: dict[str, Counter] = defaultdict(Counter)
+        self.last_ts: dict[str, float] = {}  # session_id -> latest event timestamp
         self.total: Counter = Counter()
         self.subscribers: set[asyncio.Queue] = set()
         self.ready = False
@@ -70,11 +76,26 @@ class Hub:
     def _count_message(self, event: dict, sign: int) -> None:
         if event.get("role") != "assistant":
             return
-        for target in (self.total, self.by_model[event.get("model") or "inconnu"]):
+        targets = (self.total, self.by_model[event.get("model") or "inconnu"],
+                   self.by_agent[event.get("agent") or "inconnu"], self.by_session[event.get("session_id") or "?"])
+        for target in targets:
             target["messages"] += sign
             target["cost"] += sign * (event.get("cost") or 0)
             for field in ("tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_write"):
                 target[field] += sign * (event.get(field) or 0)
+
+    def _count_tool(self, event: dict, sign: int) -> None:
+        tool = event.get("tool")
+        if not tool:
+            return
+        session = self.by_session[event.get("session_id") or "?"]
+        self.by_tool[tool] += sign
+        session["tools"] += sign
+        if event.get("status"):
+            self.by_status[event["status"]] += sign
+        if event.get("status") == "error":
+            self.by_tool_errors[tool] += sign
+            session["errors"] += sign
 
     def apply(self, event: dict) -> None:
         kind, key = event.get("kind"), event.get("id")
@@ -86,16 +107,17 @@ class Hub:
             self.messages[key] = event
             self._count_message(event, +1)
         elif kind == "tool":
-            previous = self.tools.get(key)
-            if previous and previous.get("tool"):
-                self.by_tool[previous["tool"]] -= 1
+            if key in self.tools:
+                self._count_tool(self.tools[key], -1)
             self.tools[key] = event
-            if event.get("tool"):
-                self.by_tool[event["tool"]] += 1
+            self._count_tool(event, +1)
         elif kind == "session":
             self.sessions[key] = event
         else:
             return
+        ts, sid = parse_ts(event.get("ts")), event.get("session_id")
+        if ts and sid and ts > self.last_ts.get(sid, 0):
+            self.last_ts[sid] = ts
         self.dirty = True
         self.last_event_at = time.time()
 
@@ -103,15 +125,33 @@ class Hub:
         start = window.get("window_start")
         if not start:
             return
-        merged = self.activity.setdefault(start, {"window_start": start, "messages": 0, "cost": 0.0, "models": {}})
-        merged["models"][window.get("model") or "inconnu"] = window.get("messages") or 0
-        merged["messages"] = sum(merged["models"].values())
-        merged["cost"] = merged.get("cost", 0.0) + (window.get("cost") or 0)
+        merged = self.activity.setdefault(start, {"window_start": start, "models": {}})
+        # A window re-emitted by Arroyo replaces the previous value of its model instead of adding to it.
+        merged["models"][window.get("model") or "inconnu"] = {
+            field: window.get(field) or 0 for field in ("messages", "cost", "tokens_input", "tokens_output")
+        }
+        for field in ("messages", "cost", "tokens_input", "tokens_output"):
+            merged[field] = sum(m[field] for m in merged["models"].values())
         while len(self.activity) > ACTIVITY_WINDOWS:
             del self.activity[min(self.activity)]
         self.dirty = True
 
     # ------------------------------------------------------------ views
+
+    def session_rows(self) -> list[dict]:
+        rows = []
+        for sid, counter in self.by_session.items():
+            info = self.sessions.get(sid, {})
+            rows.append({
+                "id": sid, "title": info.get("title"), "agent": info.get("agent"), "model": info.get("model"),
+                "last": max(self.last_ts.get(sid, 0), parse_ts(info.get("ts")) or 0),
+                "messages": counter["messages"], "tools": counter["tools"], "errors": counter["errors"],
+                "cost": counter["cost"], "tokens": counter["tokens_input"] + counter["tokens_output"],
+                "cache_read": counter["tokens_cache_read"],
+                "context": counter["tokens_input"] + counter["tokens_cache_read"] + counter["tokens_cache_write"],
+            })
+        rows.sort(key=lambda r: -r["last"])
+        return rows[:TOP_SESSIONS]
 
     def stats(self) -> dict:
         now = time.time()
@@ -121,10 +161,13 @@ class Hub:
         )
         return {
             "now": now,
-            "total": {**self.total, "tool_calls": sum(self.by_tool.values()), "sessions": len(self.sessions),
-                      "active_sessions": active},
+            "total": {**self.total, "tool_calls": sum(self.by_tool.values()), "tool_errors": sum(self.by_tool_errors.values()),
+                      "sessions": len(self.sessions), "active_sessions": active},
             "models": {m: dict(c) for m, c in sorted(self.by_model.items(), key=lambda i: -i[1]["cost"])},
-            "tools": dict(self.by_tool.most_common(12)),
+            "agents": {a: dict(c) for a, c in sorted(self.by_agent.items(), key=lambda i: -i[1]["messages"])},
+            "tools": {t: {"calls": n, "errors": self.by_tool_errors[t]} for t, n in self.by_tool.most_common(15)},
+            "status": {k: v for k, v in self.by_status.items() if v > 0},
+            "sessions": self.session_rows(),
             "activity": [self.activity[k] for k in sorted(self.activity)],
             "last_event_at": self.last_event_at,
         }

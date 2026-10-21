@@ -31,7 +31,7 @@ distincts : ajouter le temps réel ne modifie ni le producteur ni les tables.
 | `arroyo/live.sql` | Pipeline Arroyo : lit `opencode.messages/tools/sessions` (Avro + Schema Registry), écrit `live.events` (un événement plat par ligne) et `live.activity` (fenêtres de 10 s par modèle) |
 | `arroyo/deploy.py` | Enregistre chaque `arroyo/*.sql` comme pipeline via l'API REST d'Arroyo ; `--replace` redéploie |
 | `live/server.py` | Pont SSE : rejoue `live.*` depuis le début pour reconstruire les totaux, puis suit les nouveaux événements |
-| `live/static/index.html` | Panel sans dépendance : totaux, flux d'événements, coût par modèle, outils, activité |
+| `live/static/index.html` | Panel sans dépendance : totaux, graphique empilé par modèle (réponses / coût / tokens, 15 min ou 1 h, vue tableau), sessions triables et cliquables, outils avec erreurs, agents, flux filtrable (type, texte, session, pause), thème clair/sombre |
 
 Services Compose : `arroyo` (moteur, UI sur <http://localhost:5115>),
 `arroyo-deploy` (one-shot qui déploie les pipelines) et `live` (pont + panel).
@@ -43,7 +43,7 @@ Services Compose : `arroyo` (moteur, UI sur <http://localhost:5115>),
 - `snapshot` à la connexion : totaux, derniers événements, titres de sessions ;
 - `event` pour chaque message ou appel d'outil récent ;
 - `session` quand un titre de session change ;
-- `stats` au plus une fois par seconde quand quelque chose a changé.
+- `stats` au plus une fois par seconde quand quelque chose a changé : totaux, `models`, `agents`, `tools` (appels et erreurs), `status`, `sessions` (40 plus récentes, avec coût, outils, cache) et `activity` (fenêtres de 10 s sur 1 h, ventilées par modèle).
 
 Un commentaire `: keepalive` part chaque seconde sans changement. `EventSource`
 se reconnecte seul et reçoit un nouveau `snapshot`.
