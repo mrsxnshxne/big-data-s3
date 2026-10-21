@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observatory live</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #14181f; --muted: #626b79; --line: #e1e4ea;
+    --accent: #2b6cb0; --ok: #1f9d55; --warn: #c27c0e; --bad: #c53030;
+    --message: #2b6cb0; --tool: #7a4fb5; --session: #8a93a3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --card: #171b23; --ink: #e8ebf0; --muted: #98a1b0; --line: #262c37;
+      --accent: #63a4e8; --ok: #4cc380; --warn: #e0a84a; --bad: #f08080;
+      --message: #63a4e8; --tool: #b393e6; --session: #7d8696;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--ok); animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .dot.on { animation: none; } }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .kpi .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value.bump { animation: bump .6s; }
+  @keyframes bump { 30% { color: var(--accent); } }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  #feed { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; }
+  #feed li { display: grid; grid-template-columns: 64px 70px 1fr auto; gap: 10px; align-items: baseline;
+             padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  #feed li:last-child { border-bottom: 0; }
+  #feed li.fresh { animation: fresh 1.2s; }
+  @keyframes fresh { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } }
+  .time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .tag { font-size: 12px; font-weight: 600; }
+  .tag.message { color: var(--message); } .tag.tool { color: var(--tool); }
+  .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .what small { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; }
+  .bars { display: grid; gap: 7px; }
+  .bar { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr auto; gap: 8px; align-items: center; font-size: 13px; }
+  .bar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .track { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+  .bar.tool .fill { background: var(--tool); }
+  svg { width: 100%; height: 90px; display: block; }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+  .stack { display: grid; gap: 12px; align-content: start; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Observatory live</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">Connexion…</span></div>
+  </header>
+
+  <section class="kpis" aria-label="Totaux">
+    <div class="card kpi"><div class="value" id="k-cost">–</div><div class="label">Coût cumulé</div></div>
+    <div class="card kpi"><div class="value" id="k-messages">–</div><div class="label">Réponses de l'agent</div></div>
+    <div class="card kpi"><div class="value" id="k-tools">–</div><div class="label">Appels d'outils</div></div>
+    <div class="card kpi"><div class="value" id="k-tokens">–</div><div class="label">Tokens (entrée + sortie)</div></div>
+    <div class="card kpi"><div class="value" id="k-cache">–</div><div class="label">Contexte lu en cache</div></div>
+    <div class="card kpi"><div class="value" id="k-active">–</div><div class="label">Sessions actives (5 min)</div></div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Flux d'événements</h2>
+      <ul id="feed"></ul>
+      <p class="empty" id="feed-empty">En attente d'événements…</p>
+    </section>
+    <div class="stack">
+      <section class="card">
+        <h2>Activité (fenêtres de 10 s)</h2>
+        <svg id="spark" viewBox="0 0 300 90" preserveAspectRatio="none" role="img" aria-label="Réponses par fenêtre de 10 secondes"></svg>
+      </section>
+      <section class="card"><h2>Coût par modèle</h2><div class="bars" id="models"></div></section>
+      <section class="card"><h2>Outils les plus appelés</h2><div class="bars" id="tools"></div></section>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const nf = new Intl.NumberFormat("fr-FR");
+const titles = {};
+let lastEventAt = null;
+
+const fmt = {
+  cost: (v) => (v || 0).toLocaleString("fr-FR", { style: "currency", currency: "USD", maximumFractionDigits: v >= 100 ? 0 : 2 }),
+  count: (v) => nf.format(Math.round(v || 0)),
+  compact: (v) => new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(v || 0),
+  time: (iso) => iso ? new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + "Z").toLocaleTimeString("fr-FR") : "",
+};
+
+function setKpi(id, text) {
+  const el = $(id);
+  if (el.textContent !== text) {
+    el.textContent = text;
+    el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+  }
+}
+
+function bars(container, entries, format, cls) {
+  const max = Math.max(...entries.map((e) => e[1]), 1e-9);
+  container.className = "bars";
+  container.replaceChildren(...entries.map(([name, value]) => {
+    const row = document.createElement("div");
+    row.className = "bar " + (cls || "");
+    row.innerHTML = '<span class="name"></span><span class="track"><span class="fill"></span></span><span class="num"></span>';
+    row.children[0].textContent = name; row.children[0].title = name;
+    row.children[1].firstChild.style.width = (100 * value / max) + "%";
+    row.children[2].textContent = format(value);
+    return row;
+  }));
+  if (!entries.length) container.innerHTML = '<p class="empty">Aucune donnée</p>';
+}
+
+function spark(windows) {
+  const svg = $("spark");
+  if (!windows.length) { svg.innerHTML = ""; return; }
+  const values = windows.map((w) => w.messages);
+  const max = Math.max(...values, 1), step = 300 / Math.max(values.length, 1), w = Math.max(step - 1.5, 1);
+  svg.innerHTML = values.map((v, i) => {
+    const h = Math.max(2, 86 * v / max);
+    return `<rect x="${i * step}" y="${90 - h}" width="${w}" height="${h}" rx="1.5" fill="var(--accent)"><title>${v} réponse(s)</title></rect>`;
+  }).join("");
+}
+
+function renderStats(s) {
+  const t = s.total;
+  setKpi("k-cost", fmt.cost(t.cost));
+  setKpi("k-messages", fmt.count(t.messages));
+  setKpi("k-tools", fmt.count(t.tool_calls));
+  setKpi("k-tokens", fmt.compact((t.tokens_input || 0) + (t.tokens_output || 0)));
+  const context = (t.tokens_input || 0) + (t.tokens_cache_read || 0) + (t.tokens_cache_write || 0);
+  setKpi("k-cache", context ? Math.round(100 * (t.tokens_cache_read || 0) / context) + " %" : "–");
+  setKpi("k-active", fmt.count(t.active_sessions));
+  bars($("models"), Object.entries(s.models).map(([m, v]) => [m, v.cost]), fmt.cost);
+  bars($("tools"), Object.entries(s.tools), fmt.count, "tool");
+  spark(s.activity);
+  lastEventAt = s.last_event_at;
+}
+
+function cell(className, text) {
+  const el = document.createElement("span");
+  el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+function addEvent(e, fresh) {
+  const li = document.createElement("li");
+  if (fresh) li.className = "fresh";
+  const isTool = e.kind === "tool";
+  const what = cell("what", isTool ? (e.tool || "outil") : (e.role === "user" ? "Prompt" : "Réponse"));
+  const detail = isTool ? e.status : e.model;
+  const session = titles[e.session_id] || (e.session_id || "").slice(0, 12);
+  const small = document.createElement("small");
+  small.textContent = [detail, session].filter(Boolean).join(" · ");
+  what.append(" ", small);
+  li.append(cell("time", fmt.time(e.ts)), cell("tag " + e.kind, isTool ? "outil" : "message"), what,
+            cell("num", !isTool && e.cost ? fmt.cost(e.cost) : ""));
+  $("feed").prepend(li);
+  while ($("feed").children.length > 200) $("feed").lastChild.remove();
+  $("feed-empty").hidden = true;
+}
+
+function setStatus(on, text) {
+  $("dot").classList.toggle("on", on);
+  $("status").textContent = text;
+}
+
+function tickStatus() {
+  if (!$("dot").classList.contains("on")) return;
+  if (lastEventAt) {
+    const age = Math.max(0, Date.now() / 1000 - lastEventAt);
+    setStatus(true, age < 90 ? "En direct · dernier événement il y a " + Math.round(age) + " s"
+                             : "En direct · dernier événement il y a " + Math.round(age / 60) + " min");
+  } else setStatus(true, "En direct · aucun événement reçu");
+}
+
+function connect() {
+  const source = new EventSource("/stream");
+  source.onopen = () => setStatus(true, "En direct");
+  source.onerror = () => setStatus(false, "Connexion perdue, nouvelle tentative…");
+  source.addEventListener("snapshot", (m) => {
+    const data = JSON.parse(m.data);
+    Object.assign(titles, data.titles);
+    $("feed").replaceChildren();
+    data.recent.forEach((e) => addEvent(e, false));
+    $("feed-empty").hidden = data.recent.length > 0;
+    renderStats(data.stats);
+    tickStatus();
+  });
+  source.addEventListener("event", (m) => addEvent(JSON.parse(m.data), true));
+  source.addEventListener("session", (m) => { const s = JSON.parse(m.data); if (s.title) titles[s.id] = s.title; });
+  source.addEventListener("stats", (m) => { renderStats(JSON.parse(m.data)); tickStatus(); });
+}
+
+connect();
+setInterval(tickStatus, 1000);
+</script>
+</body>
+</html>

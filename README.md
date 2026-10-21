@@ -29,6 +29,7 @@ Apache Spark lit les mêmes tables Iceberg et fournit des agrégats analytiques 
 
 - [Documentation complète](docs/README.md)
 - [Architecture et flux](docs/architecture.md)
+- [Temps réel : Arroyo et panel SSE](docs/realtime.md)
 - [Extraction et producteur d'événements](docs/ingestion.md)
 - [Redpanda et flux d'événements](docs/redpanda.md)
 - [RustFS et S3](docs/s3.md)
@@ -39,6 +40,11 @@ Apache Spark lit les mêmes tables Iceberg et fournit des agrégats analytiques 
 
 Les données peuvent contenir des prompts, chemins, commandes et sorties d'outils
 sensibles. Ne rendez pas les buckets publics et ne commitez jamais `.env`.
+
+## Temps réel
+
+`docker-compose up -d arroyo live && docker-compose run --rm arroyo-deploy` démarre Arroyo et le panel SSE
+sur <http://localhost:8600> (détails dans [docs/realtime.md](docs/realtime.md)).
 
 ## Installation
 

@@ -14,14 +14,14 @@ services:
       - --overprovisioned
       - --node-id=0
       - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
-      - --advertise-kafka-addr=internal://redpanda:29092,external://127.0.0.1:${KAFKA_PORT:-9092}
+      - --advertise-kafka-addr=internal://redpanda:29092,external://${KAFKA_ADVERTISED_HOST:-127.0.0.1}:${KAFKA_PORT:-9092}
       - --schema-registry-addr=0.0.0.0:8081
       # HTTP Proxy: the OpenCode plugin produces through it with plain fetch().
       - --pandaproxy-addr=0.0.0.0:8082
     ports:
-      - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
-      - "127.0.0.1:${SCHEMA_REGISTRY_PORT:-8081}:8081"
-      - "127.0.0.1:${KAFKA_HTTP_PROXY_PORT:-8082}:8082"
+      - "${BIND_ADDRESS:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
+      - "${BIND_ADDRESS:-127.0.0.1}:${SCHEMA_REGISTRY_PORT:-8081}:8081"
+      - "${BIND_ADDRESS:-127.0.0.1}:${KAFKA_HTTP_PROXY_PORT:-8082}:8082"
     volumes:
       - redpanda-data:/data
     restart: unless-stopped
@@ -39,6 +39,9 @@ services:
         until rpk cluster info -X brokers=redpanda:29092 >/dev/null 2>&1; do sleep 1; done;
         for name in sessions messages parts tools; do
         rpk topic create ${KAFKA_TOPIC_PREFIX:-opencode}.$$name -X brokers=redpanda:29092 || true;
+        done;
+        for name in events activity; do
+        rpk topic create live.$$name -c retention.ms=-1 -X brokers=redpanda:29092 || true;
         done
     restart: "no"
 
@@ -50,8 +53,8 @@ services:
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
     ports:
-      - "127.0.0.1:${S3_API_PORT:-9000}:9000"
-      - "127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001"
+      - "${BIND_ADDRESS:-127.0.0.1}:${S3_API_PORT:-9000}:9000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${S3_CONSOLE_PORT:-9001}:9001"
     volumes:
       - rustfs-data:/data
     restart: unless-stopped
@@ -73,7 +76,7 @@ services:
       # tabulario/iceberg-rest maps __ to "-" in catalog properties; s3.path-style-access requires this spelling.
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
     ports:
-      - "127.0.0.1:${ICEBERG_PORT:-8181}:8181"
+      - "${BIND_ADDRESS:-127.0.0.1}:${ICEBERG_PORT:-8181}:8181"
     volumes:
       # /home/iceberg is owned by the image's iceberg user, so the volume inherits write access.
       - iceberg-catalog:/home/iceberg
@@ -111,6 +114,57 @@ services:
       ICEBERG_S3_PATH_STYLE_ACCESS: "true"
     restart: unless-stopped
 
+  # Real-time path: Arroyo turns the opencode.* topics into flat JSON events on
+  # live.events / live.activity, which the SSE bridge below streams to the browser.
+  # The Iceberg history stays written by the sink service.
+  arroyo:
+    container_name: big-data-s3-arroyo
+    image: ghcr.io/arroyosystems/arroyo:0.15.0
+    command: ["cluster"]
+    depends_on:
+      - redpanda
+      - rustfs
+    environment:
+      # Checkpoints live next to the data, in RustFS.
+      ARROYO__CHECKPOINT_URL: s3://${ICEBERG_BUCKET:-iceberg-warehouse}/arroyo/checkpoints
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-rustfsadmin}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: http://rustfs:9000
+      AWS_ALLOW_HTTP: "true"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${ARROYO_PORT:-5115}:5115"
+    volumes:
+      - arroyo-data:/root/.config/arroyo
+    restart: unless-stopped
+
+  # Registers the Arroyo pipelines (arroyo/*.sql) once the engine answers; safe to rerun.
+  arroyo-deploy:
+    container_name: big-data-s3-arroyo-deploy
+    build: .
+    depends_on:
+      - arroyo
+      - redpanda-topics
+    command: ["python", "arroyo/deploy.py"]
+    environment:
+      ARROYO_URL: http://arroyo:5115
+    restart: "no"
+
+  # SSE bridge + custom panel: reads live.* from Redpanda, serves http://localhost:8600.
+  live:
+    container_name: big-data-s3-live
+    build: .
+    depends_on:
+      - redpanda
+      - arroyo
+    command: ["python", "live/server.py"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+    ports:
+      - "${LIVE_BIND:-${BIND_ADDRESS:-127.0.0.1}}:${LIVE_PORT:-8600}:8600"
+    restart: unless-stopped
+
   dashboard:
     container_name: big-data-s3-dashboard
     build: .
@@ -120,7 +174,7 @@ services:
       - iceberg-rest
     ports:
       # Set DASHBOARD_BIND=0.0.0.0 to reach it from the LAN (it shows prompts and tool outputs).
-      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8501}:8501"
+      - "${DASHBOARD_BIND:-${BIND_ADDRESS:-127.0.0.1}}:${DASHBOARD_PORT:-8501}:8501"
     environment:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-rustfsadmin}
@@ -161,3 +215,4 @@ volumes:
   rustfs-data:
   redpanda-data:
   iceberg-catalog:
+  arroyo-data:

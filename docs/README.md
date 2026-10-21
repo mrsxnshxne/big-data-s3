@@ -80,6 +80,7 @@ docker-compose --profile dashboard up --build dashboard
 ## Guides
 
 - [Architecture et flux](architecture.md)
+- [Temps réel : Arroyo et panel SSE](realtime.md)
 - [Extraction et producteur d'événements](ingestion.md)
 - [Plugins de collecte](../plugins/README.md)
   - [OpenCode : installation, désinstallation, fonctionnement](../plugins/opencode/README.md)
